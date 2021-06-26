@@ -3,29 +3,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import random
-import seaborn as sns
-import sklearn
-import sklearn.cluster
-import sklearn.manifold
-import statsmodels.api as sm
 import tensorflow as tf
 import time
 import tqdm
-from sklearn.metrics.pairwise import cosine_similarity
-
-
-'''
-gpus = tf.config.experimental.list_physical_devices('GPU')
-print(gpus)
-if gpus:
-    try:
-        tf.config.experimental.set_virtual_device_configuration(
-            gpus[0],
-            [tf.config.experimental.VirtualDeviceConfiguration(
-                memory_limit=10240)])
-    except RuntimeError as e:
-        print(e)
-'''
 
 
 def posenc(x):
@@ -162,81 +142,36 @@ if __name__ == '__main__':
     pts = []
     near, far = 2., 6.
 
-    # for i in range(100):
-    #     rays_o, rays_d = get_rays(*images.shape[:2], focal, poses[i])
-
-    #     z_vals = tf.linspace(near, far, 2)
-    #     pts.append(
-    #         rays_o[..., None, :] + rays_d[..., None, :] * z_vals[..., :, None])
-    # pts = tf.concat(pts, axis=-2)
-    # pts_mins = tf.reduce_min(pts, axis=(0, 1, 2))
-    # pts_maxs = tf.reduce_max(pts, axis=(0, 1, 2))
-    # model.summary()
-
-    '''
-    t = t0 = time.time()
-    for i in range(n_iters + 1):
-        img_i = np.random.randint(images.shape[0])
-
-        ratio = i / n_iters
-        target = images[img_i]
-        pose = poses[img_i]
-
-        H, W = target.shape[-3:-1]
-        n_samples = max_samples
-        n_samples = max_samples
-
-        rays_o, rays_d = get_rays(H, W, focal, pose)
-        x_shuffle = tf.random.shuffle(tf.range(H))[:int(H/2+(H/2)*ratio)]
-        y_shuffle = tf.random.shuffle(tf.range(W))[:int(W/2+(W/2)*ratio)]
-    
-        # target = tf.gather(tf.gather(target, x_shuffle, axis=0),
-        #                    y_shuffle, axis=1)
-        # rays_o = tf.gather(tf.gather(rays_o, x_shuffle, axis=0),
-        #                    y_shuffle, axis=1)
-        # rays_d = tf.gather(tf.gather(rays_d, x_shuffle, axis=0),
-        #                    y_shuffle, axis=1)
-
-        with tf.GradientTape() as tape:
-            rgb, depth, acc = render_rays(model, rays_o, rays_d, 
-                                          near=2., far=6., 
-                                          n_samples=n_samples, rand=True)
-            loss = tf.reduce_mean(tf.square(rgb - target))
-        gradients = tape.gradient(loss, model.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-
-        if i % i_plot == 0:
-            # outputs = analyze_model(model, pts_mins, pts_maxs)
-            # zeros = [tf.reduce_mean(tf.cast(o == 0, dtype=tf.float32)).numpy()
-            #          for o in outputs[1:-1]]
-
-            # Render the holdout view for logging
-            rays_o, rays_d = get_rays(height, width, focal, testpose)
-            rgb, depth, acc = render_rays(model, rays_o, rays_d, 
-                                          near=2., far=6., 
-                                          n_samples=n_samples)
-            loss = tf.reduce_mean(tf.square(rgb - testimg))
-            psnr = -10. * tf.math.log(loss) / tf.math.log(10.)
-
-            print(f"{i} {(time.time() - t)/i_plot} secs per iter - psnr: {psnr}")
-            t = time.time()
-
-            psnrs.append(psnr)
-            iternums.append(i)
-
-    model.save('tiny.h5')
-    '''
     model.load_weights('tiny.h5')
 
     def randomize_weights(model, layer, ratio):
+        if ratio == 0:
+            return
+
         model.load_weights('tiny.h5')
         weights = model.get_weights()
         assert layer < len(weights) // 2
 
         n_units = weights[layer*2].shape[-1]
         masks = np.random.uniform(size=n_units) > ratio
+        
+        '''
+        # Zeroize
+        # Dense
+        w = weights[layer*2]
         weights[layer*2] *= masks[np.newaxis, :]
+
+        # Bias
         weights[layer*2+1] *= masks
+        '''
+
+        # Shuffle
+        l = weights[layer*2]
+        weights[layer*2] = np.concatenate(
+            [l[:, n_units//2:], l[:, n_units//2:]], -1)
+        l = weights[layer*2+1]
+        weights[layer*2+1] = np.concatenate(
+            [l[n_units//2:], l[:n_units//2]], -1) 
 
         model.set_weights(weights)
 
@@ -269,47 +204,4 @@ if __name__ == '__main__':
         axs[row, col].set_title(f'{i}-{psnrs[i]:.5f}')
         axs[row, col].imshow(rgbs[i])
     plt.show()
-
-    '''
-    def center(x): 
-        return (np.abs(x) / (np.abs(x).sum()+1e-8) * np.arange(len(x))).mean()
-
-    outputs = analyze_model(model, pts_mins, pts_maxs, 
-                            embed_fn,
-                            n_samples=2048, D=8)
-
-    total_tvalues = []
-    X = sm.add_constant(outputs[0])
-    for j in range(8):
-        tvalues = []
-        for i in range(outputs[1].shape[-1]):
-            results = sm.OLS(outputs[j + 1][:, i].numpy(), X).fit()
-            tvalues.append(np.nan_to_num(np.abs(results.tvalues[1:]))) # remove constant
-        tvalues = sorted(tvalues, key=center)
-        tvalues = np.stack(tvalues)
-        total_tvalues.append(tvalues)
-    total_tvalues = tf.stack(total_tvalues, 0)
-    total_tvalues = np.abs(total_tvalues)
-    max_tvalue = tf.math.reduce_max(total_tvalues)
-    min_tvalue = tf.math.reduce_min(total_tvalues)
-
-    fig, axs = plt.subplots(ncols=8)
-    for j in range(8):
-        print([center(t) for t in total_tvalues[j]])
-        imshow = axs[j].imshow(tf.cast(total_tvalues[j] > 2.576, 'int32'),
-                               vmin=0, vmax=1) # max_tvalue)
-        axs[j].set_title(j)
-    # plt.colorbar(imshow)
-    plt.savefig('temp.png')
-    # plt.show()
-
-    plt.figure(figsize=(10,4))
-    plt.subplot(121)
-    plt.imshow(rgb)
-    plt.title(f'Iteration: {i} ({time.time() - t0:.4f} secs)')
-    plt.subplot(122)
-    plt.plot(iternums, psnrs)
-    plt.title(f'PSNR ({max(psnrs):.6f}, {psnrs[-1]:.6f})')
-    plt.show()
-    '''
 
