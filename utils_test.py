@@ -8,11 +8,24 @@ class UtilsTest(tf.test.TestCase):
         self.width = 400
         self.focal = 100
         self.c2w = tf.eye(4)
+        
+    def test_get_grid(self):
+        # downscale == 1
+        height, width, focal = 4, 6, 1
+        grid = get_grid(height, width, focal)
+        self.assertEqual(grid.shape, [height, width, 3])
+        print(grid)
+        self.assertEqual(tf.reduce_sum(grid, axis=(0, 1)),
+                         tf.zeros((3,)))
 
     def test_get_rays(self):
-        rays_o, rays_d = get_rays(self.height, self.width, self.focal, self.c2w)
-        self.assertEqual(rays_o.shape, [self.height, self.width, 3])
-        self.assertEqual(rays_d.shape, [self.height, self.width, 3])
+        # test [batch, 3] and [batch, n_samples, 3] shaped dirs
+        for shape in [[32], [4, 2]]:
+            dirs = tf.random.normal([*shape, 3])
+            c2w = tf.random.normal([*shape, 3, 4])
+            rays_o, rays_d = get_rays(dirs, c2w)
+            self.assertEqual(rays_o.shape, [*shape, 3])
+            self.assertEqual(rays_d.shape, [*shape, 3])
 
     def test_rays_to_points(self):
         rays_o = tf.random.normal([self.height, self.width, 3])

@@ -25,26 +25,21 @@ def batchify(fn, chunk=None):
     return batchified
 
 
-def get_rays(height, width, focal, c2w):
-    """
-    get ray origins, directions from a pinhole camera
-
-    INPUTS
-        height: scalar
-        width: scalar
-        focal: scalar
-        c2w: [4, 4]
-
-    OUTPUTS
-        rays_o: [height, width, 3]
-        rays_d: [height, width, 3]
-    """
-    i, j = tf.meshgrid(tf.range(width, dtype=tf.float32),
-                       tf.range(height, dtype=tf.float32), indexing='xy')
-    dirs = tf.stack([(i-width/2)/focal, -(j-height/2)/focal, -tf.ones_like(i)],
+def get_grid(height, width, focal, downscale=1):
+    # assert height % downscale == 0 and width % downscale == 0
+    i, j = tf.meshgrid(tf.range(0, width, downscale, dtype=tf.float32),
+                       tf.range(0, height, downscale, dtype=tf.float32),
+                       indexing='xy')
+    dirs = tf.stack([(i-width/2+0.5*downscale)/focal,
+                     -(j-height/2+0.5*downscale)/focal,
+                     -tf.ones_like(i)],
                     -1)
-    rays_d = tf.reduce_sum(dirs[..., tf.newaxis, :] * c2w[:3, :3], -1)
-    rays_o = tf.broadcast_to(c2w[:3, -1], tf.shape(rays_d))
+    return dirs
+
+
+def get_rays(dirs, c2w):
+    rays_d = tf.reduce_sum(dirs[..., tf.newaxis, :] * c2w[..., :3, :3], -1)
+    rays_o = tf.broadcast_to(c2w[..., :3, -1], tf.shape(rays_d))
     return rays_o, rays_d
 
 
