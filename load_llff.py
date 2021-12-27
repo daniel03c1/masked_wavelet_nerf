@@ -10,30 +10,24 @@ def load_llff_data(basedir, bd_factor=.75):
     """
     INPUTS
         basedir: str
-        bd_factor: ???
+        bd_factor: float
 
     poses: [n_images, 3, 5] shaped array
     bds: [n_images, 2] shaped array
          min, max depths of each image
     """
     poses, bds, images = load_raw_data(basedir)
-    pts_arr = np.load(os.path.join(basedir, 'pts_arr.npy')).astype('float32')
-    pts_rgb_arr = np.load(os.path.join(basedir, 'pts_rgb_arr.npy'))
-    vis_arr = np.load(os.path.join(basedir, 'vis_arr.npy'))
-    z_vals = np.load(os.path.join(basedir, 'z_vals.npy')).astype('float32')
 
     if bd_factor:
         # rescale every coordinates so that min(bds) equals 1/bd_factor
         scale = 1. / (bds.min()*bd_factor)
         poses[:, :3, 3] *= scale
-        pts_arr *= scale
-        z_vals *= scale
         bds *= scale
 
-    return images, poses, bds, pts_arr, pts_rgb_arr, vis_arr, z_vals
+    return images, poses, bds
 
 
-def load_raw_data(basedir, load_imgs=True):
+def load_raw_data(basedir):
     """
     INPUTS
         basedir: path
@@ -57,9 +51,6 @@ def load_raw_data(basedir, load_imgs=True):
     if poses.shape[0] != len(imgfiles):
         raise ValueError(f'Mismatch between imgs {len(imgfiles)} '
                          f'and poses {poses.shape[-1]} !!!!')
-    
-    if not load_imgs:
-        return poses, bds
     
     def imread(f):
         if f.endswith('png'):
