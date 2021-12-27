@@ -6,7 +6,7 @@ import os
 import matplotlib.pyplot as plt
 
 
-def load_llff_data(basedir, bd_factor=.75):
+def load_llff_data(basedir, bd_factor=.75, recenter=True):
     """
     INPUTS
         basedir: str
@@ -17,6 +17,9 @@ def load_llff_data(basedir, bd_factor=.75):
          min, max depths of each image
     """
     poses, bds, images = load_raw_data(basedir)
+
+    if recenter:
+        poses = recenter_poses(poses)
 
     if bd_factor:
         # rescale every coordinates so that min(bds) equals 1/bd_factor
