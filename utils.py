@@ -6,8 +6,9 @@ def img_to_mse(x, y):
     return tf.reduce_mean(tf.square(x - y))
 
 
+log10 = tf.math.log(10.)
 def mse_to_psnr(x):
-    return -10. * tf.log(x) / tf.log(10.)
+    return -10. * tf.math.log(x) / log10
 
 
 def float_to_uint8(x: tf.Tensor):
