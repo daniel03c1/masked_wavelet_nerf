@@ -30,7 +30,7 @@ class BlenderDataset(torch.utils.data.Dataset):
 
         self.white_bg = True
         self.near_far = [2.0, 6.0]
-        
+
         self.center = torch.mean(self.scene_bbox, axis=0).float().view(1, 1, 3)
         self.radius = (self.scene_bbox[1] - self.center).float().view(1, 1, 3)
 
@@ -74,7 +74,7 @@ class BlenderDataset(torch.utils.data.Dataset):
             image_path = os.path.join(self.root_dir, f"{frame['file_path']}.png")
             self.image_paths += [image_path]
             img = Image.open(image_path)
-            
+
             if self.downsample!=1.0:
                 img = img.resize(self.img_wh, Image.LANCZOS)
             img = self.transform(img)  # (4, h, w)
@@ -86,6 +86,7 @@ class BlenderDataset(torch.utils.data.Dataset):
             self.all_rays += [torch.cat([rays_o, rays_d], 1)]  # (h*w, 6)
 
         self.poses = torch.stack(self.poses)
+
         if not self.is_stack:
             # (len(self.meta['frames'])*h*w, 3)
             self.all_rays = torch.cat(self.all_rays, 0)
@@ -95,7 +96,7 @@ class BlenderDataset(torch.utils.data.Dataset):
             self.all_rays = torch.stack(self.all_rays, 0)
             self.all_rgbs = torch.stack(self.all_rgbs, 0) \
                                  .reshape(-1, *self.img_wh[::-1], 3)
- 
+
     def define_proj_mat(self):
         self.proj_mat = self.intrinsics.unsqueeze(0) \
                       @ torch.inverse(self.poses)[:,:3]
@@ -103,21 +104,18 @@ class BlenderDataset(torch.utils.data.Dataset):
     def world2ndc(self,points,lindisp=None):
         device = points.device
         return (points - self.center.to(device)) / self.radius.to(device)
-        
+
     def __len__(self):
         return len(self.all_rgbs)
 
     def __getitem__(self, idx):
         if self.split == 'train':  # use data in the buffers
             return self.all_rays[idx], self.all_rgbs[idx]
-            # sample = {'rays': self.all_rays[idx], 'rgbs': self.all_rgbs[idx]}
         else:  # create data for each image separately
             img = self.all_rgbs[idx]
             rays = self.all_rays[idx]
             mask = self.all_masks[idx] # for quantity evaluation
             return rays, img, mask
-        #     sample = {'rays': rays, 'rgbs': img, 'mask': mask}
-        # return sample
 
     def read_depth(self, filename):
         depth = np.array(read_pfm(filename)[0], dtype=np.float32) # (800, 800)

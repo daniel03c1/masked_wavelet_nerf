@@ -33,20 +33,18 @@ class AlphaGridMask(torch.nn.Module):
 
 
 class TensorBase(torch.nn.Module):
-    def __init__(self, aabb, gridSize, device, density_n_comp=8,
-                 appearance_n_comp=24, app_dim=27, shadingMode='MLP_PE',
+    def __init__(self, aabb, gridSize, device,
+                 app_dim=27, shadingMode='MLP_PE',
                  alphaMask=None, near_far=[2.0, 6.0], density_shift=-10,
                  alphaMask_thres=0.001, distance_scale=25,
                  rayMarch_weight_thres=0.0001, pos_pe=6, view_pe=6, fea_pe=6,
                  featureC=128, step_ratio=2.0, fea2denseAct='softplus'):
         super(TensorBase, self).__init__()
 
-        self.density_n_comp = density_n_comp
-        self.app_n_comp = appearance_n_comp
-        self.app_dim = app_dim
         self.aabb = aabb
-        self.alphaMask = alphaMask
         self.device = device
+        self.app_dim = app_dim
+        self.alphaMask = alphaMask
 
         self.density_shift = density_shift
         self.alphaMask_thres = alphaMask_thres
@@ -58,12 +56,6 @@ class TensorBase(torch.nn.Module):
         self.step_ratio = step_ratio
 
         self.update_stepSize(gridSize)
-
-        self.matMode = [[0,1], [0,2], [1,2]]
-        self.vecMode =  [2, 1, 0]
-        self.comp_w = [1, 1, 1]
-
-        self.init_svd_volume(gridSize[0], device=device)
 
         self.shadingMode, self.pos_pe, self.view_pe, self.fea_pe, self.featureC = shadingMode, pos_pe, view_pe, fea_pe, featureC
         self.renderModule = get_module(shadingMode, self.app_dim, pos_pe,
@@ -82,12 +74,6 @@ class TensorBase(torch.nn.Module):
         print("sampling step size: ", self.stepSize)
         print("sampling number: ", self.nSamples)
 
-    def init_svd_volume(self, res, device):
-        pass
-
-    def compute_features(self, xyz_sampled):
-        pass
-
     def compute_densityfeature(self, xyz_sampled):
         pass
 
@@ -104,8 +90,6 @@ class TensorBase(torch.nn.Module):
         return {
             'aabb': self.aabb,
             'gridSize':self.gridSize.tolist(),
-            'density_n_comp': self.density_n_comp,
-            'appearance_n_comp': self.app_n_comp,
             'app_dim': self.app_dim,
 
             'density_shift': self.density_shift,
@@ -174,9 +158,6 @@ class TensorBase(torch.nn.Module):
         mask_outbbox = ((self.aabb[0] > rays_pts) | (rays_pts > self.aabb[1])).any(dim=-1)
 
         return rays_pts, interpx, ~mask_outbbox
-
-    def shrink(self, new_aabb, voxel_size):
-        pass
 
     @torch.no_grad()
     def getDenseAlpha(self, gridSize=None):
