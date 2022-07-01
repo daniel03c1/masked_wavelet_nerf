@@ -9,25 +9,17 @@ from utils import *
 from vis_utils import *
 
 
-def OctreeRender_trilinear_fast(rays, tensorf, chunk=4096, n_samples=-1,
-                                ndc_ray=False, white_bg=True, is_train=False):
-    rgbs, alphas, depth_maps, weights, uncertainties = [], [], [], [], []
-    N_rays_all = rays.shape[0]
+def render_rays(rays, tensorf, chunk=4096, **kwargs):
+    outputs = []
 
-    for chunk_idx in range(N_rays_all // chunk + int(N_rays_all % chunk > 0)):
-        rays_chunk = rays[chunk_idx * chunk:(chunk_idx + 1) * chunk]
-    
-        rgb_map, depth_map = tensorf(rays_chunk, is_train=is_train,
-                                     white_bg=white_bg, ndc_ray=ndc_ray,
-                                     n_samples=n_samples)
-        rgbs.append(rgb_map)
-        depth_maps.append(depth_map)
-    
-    return torch.cat(rgbs), None, torch.cat(depth_maps), None, None
+    for rays_chunk in torch.split(rays, chunk):
+        outputs.append(tensorf(rays_chunk, **kwargs)) # RGB, DEPTH
+
+    return list(map(torch.cat, zip(*outputs)))
 
 
 @torch.no_grad()
-def evaluation(test_dataset, tensorf, args, renderer, savePath=None, n_vis=5,
+def evaluation(test_dataset, tensorf, args, savePath=None, n_vis=5,
                prtx='', n_samples=-1, white_bg=False, ndc_ray=False,
                compute_extra_metrics=True, device='cuda'):
     PSNRs, rgb_maps, depth_maps = [], [], []
@@ -51,9 +43,9 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, n_vis=5,
         W, H = test_dataset.img_wh
         rays = samples.view(-1, samples.shape[-1]).cuda(non_blocking=True)
 
-        rgb_map, _, depth_map, _, _ = renderer(
-            rays, tensorf, chunk=4096, n_samples=n_samples, ndc_ray=ndc_ray,
-            white_bg=white_bg)
+        rgb_map, depth_map = render_rays(rays, tensorf, chunk=4096,
+                                         n_samples=n_samples, ndc_ray=ndc_ray,
+                                         white_bg=white_bg)
         rgb_map = rgb_map.clamp(0.0, 1.0)
 
         rgb_map = rgb_map.reshape(H, W, 3).cpu()
@@ -103,7 +95,7 @@ def evaluation(test_dataset, tensorf, args, renderer, savePath=None, n_vis=5,
 
 
 @torch.no_grad()
-def evaluation_path(test_dataset,tensorf, c2ws, renderer, savePath=None,
+def evaluation_path(test_dataset,tensorf, c2ws, savePath=None,
                     n_vis=5, prtx='', n_samples=-1, white_bg=False,
                     ndc_ray=False, compute_extra_metrics=True, device='cuda'):
     PSNRs, rgb_maps, depth_maps = [], [], []
@@ -126,9 +118,9 @@ def evaluation_path(test_dataset,tensorf, c2ws, renderer, savePath=None,
             rays_o, rays_d = ndc_rays_blender(H, W, test_dataset.focal[0], 1.0, rays_o, rays_d)
         rays = torch.cat([rays_o, rays_d], 1)  # (h*w, 6)
 
-        rgb_map, _, depth_map, _, _ = renderer(rays, tensorf, chunk=8192,
-                                               n_samples=n_samples,
-                                        ndc_ray=ndc_ray, white_bg = white_bg, device=device)
+        rgb_map, depth_map = render_rays(rays, tensorf, chunk=8192,
+                                         n_samples=n_samples, ndc_ray=ndc_ray,
+                                         white_bg=white_bg, device=device)
         rgb_map = rgb_map.clamp(0.0, 1.0)
 
         rgb_map, depth_map = rgb_map.reshape(H, W, 3).cpu(), depth_map.reshape(H, W).cpu()

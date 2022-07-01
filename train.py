@@ -6,12 +6,9 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm.auto import tqdm
 
 from dataLoader import dataset_dict
-from models.tensoRF import (
-    AlphaGridMask, TensorCP, TensorVM, TensorVMSplit, TensorVX, raw2alpha, PREF
-)
+from models.tensoRF import AlphaGridMask, TensorCP, TensorVM, raw2alpha, PREF
 from opt import config_parser
 from renderer import *
-from renderer import OctreeRender_trilinear_fast as renderer
 from utils import *
 
 
@@ -54,7 +51,7 @@ def render_test(args):
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
         train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
-        PSNRs_test = evaluation(train_dataset, tensorf, args, renderer,
+        PSNRs_test = evaluation(train_dataset, tensorf, args, 
                                 f'{logfolder}/imgs_train_all/', n_vis=-1,
                                 n_samples=-1, white_bg=white_bg,
                                 ndc_ray=ndc_ray, device=device)
@@ -62,13 +59,13 @@ def render_test(args):
 
     if args.render_test:
         os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
-        evaluation(test_dataset, tensorf, args, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
+        evaluation(test_dataset, tensorf, args, f'{logfolder}/{args.expname}/imgs_test_all/',
                                 n_vis=-1, n_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device)
 
     if args.render_path:
         c2ws = test_dataset.render_path
         os.makedirs(f'{logfolder}/{args.expname}/imgs_path_all', exist_ok=True)
-        evaluation_path(test_dataset, tensorf, c2ws, renderer, f'{logfolder}/{args.expname}/imgs_path_all/',
+        evaluation_path(test_dataset, tensorf, c2ws, f'{logfolder}/{args.expname}/imgs_path_all/',
                                 n_vis=-1, n_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray, device=device)
 
 
@@ -79,24 +76,25 @@ def reconstruction(args):
                             downsample=args.downsample_train, is_stack=False)
     test_dataset = dataset(args.datadir, split='test',
                            downsample=args.downsample_train, is_stack=True)
+
+    allrays = train_dataset.all_rays.cuda(non_blocking=True)
+    allrgbs = train_dataset.all_rgbs.cuda(non_blocking=True)
+
     white_bg = train_dataset.white_bg
     near_far = train_dataset.near_far
     ndc_ray = args.ndc_ray
 
-    # init resolution
-    upsamp_list = args.upsamp_list
-    update_AlphaMask_list = args.update_AlphaMask_list
-    n_lamb_sigma = args.n_lamb_sigma
-    n_lamb_sh = args.n_lamb_sh
- 
     logfolder = f'{args.basedir}/{args.expname}'
     if args.add_timestamp:
         logfolder += f'{datetime.datetime.now().strftime("-%Y%m%d-%H%M%S")}'
 
     # init parameters
-    aabb = train_dataset.scene_bbox.to(device)
-    reso_cur = N_to_reso(args.N_voxel_init, aabb)
-    n_samples = 512 # min(args.n_samples, cal_n_samples(reso_cur, args.step_ratio))
+    aabb = train_dataset.scene_bbox.cuda()
+    n_samples = 512
+
+    # init resolution
+    n_lamb_sigma = args.n_lamb_sigma
+    n_lamb_sh = args.n_lamb_sh
 
     if args.ckpt is not None:
         ckpt = torch.load(args.ckpt, map_location=device)
@@ -106,7 +104,7 @@ def reconstruction(args):
         tensorf.load(ckpt)
     else:
         tensorf = eval(args.model_name)(
-            aabb, reso_cur, device,
+            aabb, (256, 256, 256), device,
             alphaMask_thres=args.alpha_mask_thre,
             app_dim=args.data_dim_color,
             appearance_n_comp=n_lamb_sh,
@@ -130,9 +128,6 @@ def reconstruction(args):
 
     PSNRs, PSNRs_test = [], [0]
 
-    allrays = train_dataset.all_rays.cuda(non_blocking=True)
-    allrgbs = train_dataset.all_rgbs.cuda(non_blocking=True)
-
     Ortho_reg_weight = args.Ortho_weight
     print("initial Ortho_reg_weight", Ortho_reg_weight)
 
@@ -153,7 +148,7 @@ def reconstruction(args):
         rgb_train = torch.index_select(allrgbs, 0, indices)
 
         # rgb_map, alphas_map, depth_map, weights, uncertainty
-        rgb_map, alphas_map, depth_map, weights, uncertainty = renderer(
+        rgb_map, depth_map = render_rays(
             rays_train, tensorf, chunk=args.batch_size, n_samples=n_samples,
             white_bg=white_bg, ndc_ray=ndc_ray, is_train=True)
 
@@ -195,16 +190,13 @@ def reconstruction(args):
                 f' test={float(np.mean(PSNRs_test)):.3f}')
             PSNRs = []
 
-        if iteration in upsamp_list:
-            pass # upsampling
-
     tensorf.save(f'{logfolder}/{args.expname}.th')
 
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
         train_dataset = dataset(args.datadir, split='train',
                                 downsample=args.downsample_train, is_stack=True)
-        PSNRs_test = evaluation(train_dataset, tensorf, args, renderer,
+        PSNRs_test = evaluation(train_dataset, tensorf, args,
                                 f'{logfolder}/imgs_train_all/', n_vis=-1,
                                 n_samples=-1, white_bg=white_bg,
                                 ndc_ray=ndc_ray, device=device)
@@ -212,8 +204,10 @@ def reconstruction(args):
 
     if args.render_test:
         os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
-        PSNRs_test = evaluation(test_dataset, tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
-                                n_vis=-1, n_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+        PSNRs_test = evaluation(test_dataset, tensorf, args,
+                                f'{logfolder}/imgs_test_all/', n_vis=-1,
+                                n_samples=-1, white_bg=white_bg,
+                                ndc_ray=ndc_ray, device=device)
         print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
 
     if args.render_path:
@@ -221,8 +215,9 @@ def reconstruction(args):
         # c2ws = test_dataset.poses
         print('========>',c2ws.shape)
         os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
-        evaluation_path(test_dataset, tensorf, c2ws, renderer, f'{logfolder}/imgs_path_all/',
-                                n_vis=-1, n_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+        evaluation_path(test_dataset, tensorf, c2ws,
+                        f'{logfolder}/imgs_path_all/', n_vis=-1, n_samples=-1,
+                        white_bg=white_bg, ndc_ray=ndc_ray,device=device)
 
 
 if __name__ == '__main__':
