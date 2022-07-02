@@ -1,13 +1,18 @@
 import torch
+import torch.nn as nn
 
 
-def get_module(shadingMode, in_dim, pos_pe, view_pe, fea_pe, featureC):
+def get_module(shadingMode, in_dim, pos_pe, view_pe, fea_pe, hidden_dim):
     if shadingMode == 'MLP_PE':
-        return MLPRender_PE(in_dim, view_pe, pos_pe, featureC)
+        return MLP(in_dim, include_pos=True, include_view=True,
+                   pos_n_freq=pos_pe, view_n_freq=view_pe,
+                   hidden_dim=hidden_dim)
     elif shadingMode == 'MLP_Fea':
-        return MLPRender_Fea(in_dim, view_pe, fea_pe, featureC)
+        return MLP(in_dim, include_view=True, feat_n_freq=fea_pe,
+                   view_n_freq=view_pe, hidden_dim=hidden_dim)
     elif shadingMode == 'MLP':
-        return MLPRender(in_dim, view_pe, featureC)
+        return MLP(in_dim, include_view=True, view_n_freq=view_pe,
+                   hidden_dim=hidden_dim)
     elif shadingMode == 'SH':
         return SHRender
     elif shadingMode == 'RGB':
@@ -22,100 +27,59 @@ def positional_encoding(positions, freqs):
     freq_bands = (2**torch.arange(freqs).float()).to(positions.device) # (F,)
     pts = (positions[..., None] * freq_bands).reshape(
         positions.shape[:-1] + (freqs * positions.shape[-1], )) # (..., DF)
-    pts = torch.cat([torch.sin(pts), torch.cos(pts)], dim=-1)
-    return pts
+    return torch.cat([torch.sin(pts), torch.cos(pts)], dim=-1)
 
 
 # modules
-class MLPRender_Fea(torch.nn.Module):
-    def __init__(self, inChanel, viewpe=6, feape=6, featureC=128):
-        super(MLPRender_Fea, self).__init__()
-        '''
-        inChannel: the dimension size of incomming features
-        viewpe: the degree of positional encoding (view direction)
-        feape: the degree of positional encoding (features)
-        featureC: hidden dimension size
-        '''
-        self.in_mlpC = (2 * viewpe + 1) * 3 + (2 * feape + 1) * inChanel
-        self.viewpe = viewpe
-        self.feape = feape
+class MLP(nn.Module):
+    def __init__(self, feat_dim,
+                 include_feat=True, include_pos=False, include_view=False,
+                 feat_n_freq=0, pos_n_freq=0, view_n_freq=0, hidden_dim=128):
+        super().__init__()
 
-        self.mlp = torch.nn.Sequential(
-            torch.nn.Linear(self.in_mlpC, featureC),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Linear(featureC, featureC),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Linear(featureC, 3))
-        torch.nn.init.constant_(self.mlp[-1].bias, 0)
+        self.include_feat = include_feat
+        self.include_pos = include_pos
+        self.include_view = include_view
+        self.feat_n_freq = feat_n_freq
+        self.pos_n_freq = pos_n_freq
+        self.view_n_freq = view_n_freq
 
-    def forward(self, pts, viewdirs, features):
-        indata = [features, viewdirs]
-        if self.feape > 0:
-            indata += [positional_encoding(features, self.feape)]
-        if self.viewpe > 0:
-            indata += [positional_encoding(viewdirs, self.viewpe)]
-        mlp_in = torch.cat(indata, dim=-1)
-        rgb = self.mlp(mlp_in)
-        return torch.sigmoid(rgb)
+        in_size = feat_dim * (include_feat + 2 * feat_n_freq) \
+                + 3 * (include_pos + 2 * pos_n_freq) \
+                + 3 * (include_view + 2 * view_n_freq)
 
-
-class MLPRender_PE(torch.nn.Module):
-    def __init__(self,inChanel, viewpe=6, pospe=6, featureC=128):
-        super(MLPRender_PE, self).__init__()
-
-        self.in_mlpC = (3+2*viewpe*3)+ (3+2*pospe*3)  + inChanel #
-        self.viewpe = viewpe
-        self.pospe = pospe
-        layer1 = torch.nn.Linear(self.in_mlpC, featureC)
-        layer2 = torch.nn.Linear(featureC, featureC)
-        layer3 = torch.nn.Linear(featureC,3)
-
-        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
-        torch.nn.init.constant_(self.mlp[-1].bias, 0)
+        self.mlp = nn.Sequential(
+            nn.Linear(in_size, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, 3),
+            nn.Sigmoid())
+        nn.init.constant_(self.mlp[-2].bias, 0)
 
     def forward(self, pts, viewdirs, features):
-        indata = [features, viewdirs]
-        if self.pospe > 0:
-            indata += [positional_encoding(pts, self.pospe)]
-        if self.viewpe > 0:
-            indata += [positional_encoding(viewdirs, self.viewpe)]
-        mlp_in = torch.cat(indata, dim=-1)
-        rgb = self.mlp(mlp_in)
-        rgb = torch.sigmoid(rgb)
+        inputs = []
+        if self.include_feat:
+            inputs.append(features)
+        if self.include_pos:
+            inputs.append(pts)
+        if self.include_view:
+            inputs.append(viewdirs)
 
-        return rgb
+        if self.feat_n_freq > 0:
+            inputs.append(positional_encoding(features, self.feat_n_freq))
+        if self.pos_n_freq > 0:
+            inputs.append(positional_encoding(pts, self.pos_n_freq))
+        if self.view_n_freq > 0:
+            inputs.append(positional_encoding(viewdirs, self.view_n_freq))
 
-
-class MLPRender(torch.nn.Module):
-    def __init__(self,inChanel, viewpe=6, featureC=128):
-        super(MLPRender, self).__init__()
-
-        self.in_mlpC = (3+2*viewpe*3) + inChanel
-        self.viewpe = viewpe
-        
-        layer1 = torch.nn.Linear(self.in_mlpC, featureC)
-        layer2 = torch.nn.Linear(featureC, featureC)
-        layer3 = torch.nn.Linear(featureC,3)
-
-        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
-        torch.nn.init.constant_(self.mlp[-1].bias, 0)
-
-    def forward(self, pts, viewdirs, features):
-        indata = [features, viewdirs]
-        if self.viewpe > 0:
-            indata += [positional_encoding(viewdirs, self.viewpe)]
-        mlp_in = torch.cat(indata, dim=-1)
-        rgb = self.mlp(mlp_in)
-        rgb = torch.sigmoid(rgb)
-
-        return rgb
+        return self.mlp(torch.cat(inputs, -1))
 
 
 def SHRender(xyz_sampled, viewdirs, features):
     sh_mult = eval_sh_bases(2, viewdirs)[:, None]
     rgb_sh = features.view(-1, 3, sh_mult.shape[-1])
-    rgb = torch.relu(torch.sum(sh_mult * rgb_sh, dim=-1) + 0.5)
-    return rgb
+    return torch.relu(torch.sum(sh_mult * rgb_sh, dim=-1) + 0.5)
 
 
 def RGBRender(xyz_sampled, viewdirs, features):
