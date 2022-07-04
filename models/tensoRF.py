@@ -1,39 +1,47 @@
 import torch.nn as nn
-from .voxel_based import PREF as PREF_backbone
+from .modules import PosEncoding
 from .tensorBase import *
+from .voxel_based import FreqGrid
 
 
 class PREF(TensorBase):
     def __init__(self, aabb, gridSize, device, **kargs):
         super().__init__(aabb, gridSize, device, **kargs)
-        self.density = PREF_backbone((256, 256, 256), 2)
-        self.appearance = PREF_backbone((256, 256, 256), 4)
-        self.density_net = nn.Sequential(
+        self.density = nn.Sequential(
+            # PREF_backbone((256, 256, 256), 2),
+            FreqGrid(256, 2),
             nn.Linear(2, 64),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Linear(64, 64),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Linear(64, 1))
-        self.appearance_net = nn.Linear(4, 27)
+
+        self.appearance = nn.Sequential(
+            # PREF_backbone((256, 256, 256), 4),
+            FreqGrid(256, 4),
+            nn.Linear(4, 27))
 
     def get_optparam_groups(self, lr_init_spatialxyz=0.02,
                             lr_init_network=0.001):
         return {'params': self.parameters(), 'lr': lr_init_spatialxyz}
 
     def compute_densityfeature(self, coords):
-        return self.density_net(self.density(coords)).squeeze(-1)
+        return self.density(coords).squeeze(-1)
 
     def compute_appfeature(self, coords):
-        return self.appearance_net(self.appearance(coords))
+        return self.appearance(coords)
 
     def density_L1(self):
         return torch.zeros(())
 
     def TV_loss_density(self, reg):
-        return self.density.compute_tv()
+        return self.density[0].compute_tv()
 
     def TV_loss_app(self, reg):
-        return self.appearance.compute_tv()
+        return self.appearance[0].compute_tv()
+
+    def bits(self, precision=16):
+        return precision * sum([p.numel() for p in self.parameters()])
 
 
 class TensorVM(TensorBase):
