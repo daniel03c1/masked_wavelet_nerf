@@ -17,8 +17,10 @@ class FreqGrid(nn.Module):
             n_freq = int(np.ceil(np.log2(resolution)))
         self.n_freq = n_freq
 
-        self.freqs = nn.Parameter(torch.linspace(0., 1, self.n_freq),
-                                  requires_grad=False)
+        self.freqs = nn.Parameter(
+            torch.linspace(0., 1, self.n_chan*self.n_freq).reshape(-1, self.n_chan).transpose(1, 0).reshape(-1),
+        # self.freqs = nn.Parameter(torch.linspace(0., 1, self.n_freq),
+                                  requires_grad=True)
 
         self.grid = nn.Parameter(nn.Parameter(
             torch.zeros(3, n_chan*self.n_freq, resolution, resolution),
@@ -41,15 +43,19 @@ class FreqGrid(nn.Module):
         coords = coords.squeeze(0) # [B, 1, 3]
         coords = (coords + 1) / 2 * (self.resolution - 1)
 
-        outputs = torch.cos(torch.pi / self.resolution * (coords + 0.5)
-                            * (self.get_freqs().unsqueeze(-1) + 0.5))
+        # outputs = torch.cos(torch.pi / self.resolution * (coords + 0.5)
+        #                     * (self.get_freqs().unsqueeze(-1) + 0.5))
+        outputs = torch.cos(torch.pi / self.resolution * (coords.unsqueeze(-2) + 0.5)
+                            * (self.get_freqs().reshape(self.n_chan, -1).unsqueeze(-1) + 0.5))
 
-        outputs = 2 * torch.einsum('BCFT,BFT->BCT', coefs, outputs)
+        outputs = 2 * torch.einsum('BCFT,BCFT->BCT', coefs, outputs)
+        # outputs = 2 * torch.einsum('BCFT,BFT->BCT', coefs, outputs)
 
         return outputs.sum(-1) # [B, C]
 
     def compute_tv(self):
-        weight = self.get_freqs().repeat(self.n_chan).reshape(-1, 1, 1)
+        # weight = self.get_freqs().repeat(self.n_chan).reshape(-1, 1, 1)
+        weight = self.get_freqs().reshape(-1, 1, 1)
         return (self.grid * weight).square().mean()
 
     def get_freqs(self):

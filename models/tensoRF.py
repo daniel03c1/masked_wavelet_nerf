@@ -1,7 +1,7 @@
 import torch.nn as nn
 from .modules import PosEncoding
 from .tensorBase import *
-from .voxel_based import FreqGrid
+from .grid_based import FreqGrid
 
 
 class PREF(TensorBase):
