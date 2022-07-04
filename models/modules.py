@@ -22,6 +22,35 @@ def get_module(shadingMode, in_dim, pos_pe, view_pe, fea_pe, hidden_dim):
         raise ValueError(f"Unrecognized shading module: {shadingMode}")
 
 
+class PosEncoding(nn.Module):
+    def __init__(self, in_features, n_freqs, include_inputs=False):
+        super().__init__()
+        self.in_features = in_features
+
+        if isinstance(n_freqs, (int, float)):
+            n_freqs = [n_freqs for _ in range(in_features)]
+        self.n_freqs = torch.tensor(n_freqs).int()
+
+        eye = torch.eye(in_features)
+        self.freq_mat = nn.Parameter(
+            torch.cat([torch.stack([eye[i] * (2**j)
+                                    for j in range(self.n_freqs[i])], -1)
+                       for i in range(in_features)], -1),
+            requires_grad=False)
+
+        self.include_inputs = include_inputs
+
+    def forward(self, inputs):
+        outs = []
+        if self.include_inputs:
+            outs.append(inputs)
+        mapped = inputs @ self.freq_mat
+        outs.append(torch.cos(mapped))
+        outs.append(torch.sin(mapped))
+
+        return torch.cat(outs, -1)
+
+
 # utils
 def positional_encoding(positions, freqs):
     freq_bands = (2**torch.arange(freqs).float()).to(positions.device) # (F,)
