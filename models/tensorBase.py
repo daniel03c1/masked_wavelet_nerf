@@ -14,7 +14,7 @@ class AlphaGridMask(torch.nn.Module):
         self.device = device
 
         self.aabb = aabb.to(self.device)
-        self.aabbSize = self.aabb[1] - self.aabb[0]
+        self.aabb_size = self.aabb[1] - self.aabb[0]
         self.alpha_volume = alpha_volume.view(1, 1, *alpha_volume.shape[-3:])
         self.gridSize = torch.LongTensor([alpha_volume.shape[-1],
                                           alpha_volume.shape[-2],
@@ -28,7 +28,7 @@ class AlphaGridMask(torch.nn.Module):
 
     def normalize_coord(self, xyz_sampled):
         # normalize coords to [-1, 1]
-        return 2 * (xyz_sampled - self.aabb[0]) / self.aabbSize - 1
+        return 2 * (xyz_sampled - self.aabb[0]) / self.aabb_size - 1
 
 
 class TensorBase(torch.nn.Module):
@@ -63,11 +63,11 @@ class TensorBase(torch.nn.Module):
     def update_stepSize(self, gridSize):
         print("aabb", self.aabb.view(-1))
         print("grid size", gridSize)
-        self.aabbSize = self.aabb[1] - self.aabb[0]
+        self.aabb_size = self.aabb[1] - self.aabb[0]
         self.gridSize = torch.LongTensor(gridSize).to(self.device)
-        self.units = self.aabbSize / (self.gridSize-1)
+        self.units = self.aabb_size / (self.gridSize-1)
         self.stepSize = torch.mean(self.units)*self.step_ratio
-        self.aabbDiag = torch.sqrt(torch.sum(torch.square(self.aabbSize)))
+        self.aabbDiag = torch.sqrt(torch.sum(torch.square(self.aabb_size)))
         self.nSamples = int((self.aabbDiag / self.stepSize).item()) + 1
         print("sampling step size: ", self.stepSize)
         print("sampling number: ", self.nSamples)
@@ -79,7 +79,7 @@ class TensorBase(torch.nn.Module):
         pass
 
     def normalize_coord(self, xyz_sampled):
-        return 2 * (xyz_sampled-self.aabb[0]) / self.aabbSize - 1
+        return 2 * (xyz_sampled - self.aabb[0]) / self.aabb_size - 1
 
     def sample_ray_ndc(self, rays_o, rays_d, is_train=True, n_samples=-1):
         n_samples = n_samples if n_samples > 0 else self.nSamples
@@ -209,9 +209,8 @@ class TensorBase(torch.nn.Module):
             alphas = self.alphaMask.sample_alpha(xyz_sampled[ray_valid])
             ray_valid = ray_valid & (alphas > 0)
 
-        sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
-        rgb = torch.zeros((*xyz_sampled.shape[:2], 3),
-                          device=xyz_sampled.device)
+        sigma = torch.zeros_like(xyz_sampled[..., 0])
+        rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=sigma.device)
 
         if ray_valid.any():
             xyz_sampled = self.normalize_coord(xyz_sampled)
@@ -232,7 +231,7 @@ class TensorBase(torch.nn.Module):
 
         if white_bg or (is_train and torch.rand((1,)) < 0.5):
             rgb_map = rgb_map + (1. - acc_map[..., None])
- 
+
         rgb_map = rgb_map.clamp(0, 1)
 
         depth_map = torch.sum(weight * z_vals, -1)
