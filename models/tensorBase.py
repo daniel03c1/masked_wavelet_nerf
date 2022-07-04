@@ -104,12 +104,13 @@ class TensorBase(torch.nn.Module):
         rate_b = (self.aabb[0] - rays_o) / vec
         t_min = torch.minimum(rate_a, rate_b).amax(-1).clamp(min=near, max=far)
 
-        rng = torch.arange(n_samples)[None].float()
+        rng = torch.arange(n_samples, dtype=torch.float32,
+                           device=rays_o.device)[None]
         if is_train:
             rng = rng.repeat(rays_d.shape[-2], 1)
             rng += torch.rand_like(rng[:, [0]])
 
-        step = stepsize * rng.to(rays_o.device)
+        step = stepsize * rng
         interpx = (t_min[..., None] + step)
 
         rays_pts = rays_o[...,None,:] + rays_d[...,None,:] * interpx[...,None]
@@ -122,10 +123,10 @@ class TensorBase(torch.nn.Module):
         gridSize = self.gridSize if gridSize is None else gridSize
 
         samples = torch.stack(torch.meshgrid(
-            torch.linspace(0, 1, gridSize[0]),
-            torch.linspace(0, 1, gridSize[1]),
-            torch.linspace(0, 1, gridSize[2]),
-        ), -1).to(self.device)
+            torch.linspace(0, 1, gridSize[0], device=self.device),
+            torch.linspace(0, 1, gridSize[1], device=self.device),
+            torch.linspace(0, 1, gridSize[2], device=self.device),
+        ), -1)
         dense_xyz = self.aabb[0] * (1-samples) + self.aabb[1] * samples
 
         alpha = torch.zeros_like(dense_xyz[...,0])
@@ -282,8 +283,9 @@ class TensorBase(torch.nn.Module):
 def raw2alpha(sigma, dist):
     # sigma, dist:  [N_rays, n_samples]
     alpha = 1. - torch.exp(-sigma * dist)
-    T = torch.cumprod(torch.cat([torch.ones(alpha.shape[0], 1).to(alpha.device),
-                                 1. - alpha + 1e-10], -1), -1)
+    T = torch.cumprod(torch.cat(
+        [torch.ones(alpha.shape[0], 1, device=alpha.device), 1 - alpha + 1e-10],
+        -1), -1)
     weights = alpha * T[:, :-1]  # [N_rays, n_samples]
     return alpha, weights, T[:, -1:]
 
