@@ -21,10 +21,8 @@ class FreqGrid(nn.Module):
             n_freq = int(np.ceil(np.log2(freq_resolution)))
         self.n_freq = n_freq
 
-        # self.freqs = nn.Parameter(torch.linspace(0., 1, self.n_freq),
-        self.freqs = nn.Parameter(torch.linspace(0., 1, 2*self.n_freq-1),
+        self.freqs = nn.Parameter(torch.linspace(0., 1, self.n_freq),
                                   requires_grad=False)
-        self.expander = nn.Sequential(nn.Linear(self.n_freq, self.n_freq-1))
 
         self.grid = nn.Parameter(nn.Parameter(
             torch.zeros(3, n_chan*self.n_freq, resolution, resolution),
@@ -44,11 +42,6 @@ class FreqGrid(nn.Module):
         coefs = coefs.squeeze(-1).permute(2, 1, 0) # [B, C*F, 3]
         coefs = coefs.reshape(-1, self.n_chan, self.n_freq, 3) # [B, C, F, 3]
 
-        final_coefs = torch.empty(tuple(coefs.shape[:-2]) + (2*self.n_freq-1, 3),
-                                  dtype=coefs.dtype, device=coefs.dtype)
-        final_coefs[..., ::2, :] = coefs
-        final_coefs[..., 1::2, :] = self.expander(coefs.permute(0, 1, 3, 2)).permute(0, 1, 3, 2)
-
         # numerical integration
         coords = coords.squeeze(0) # [B, 1, 3]
         coords = (coords + 1) / 2 * (self.resolution - 1)
@@ -60,8 +53,7 @@ class FreqGrid(nn.Module):
         return outputs.reshape(outputs.shape[0], -1)
 
     def compute_tv(self):
-        # weight = self.get_freqs().repeat(self.n_chan).reshape(-1, 1, 1)
-        weight = self.get_freqs()[..., ::2].repeat(self.n_chan).reshape(-1, 1, 1)
+        weight = self.get_freqs().repeat(self.n_chan).reshape(-1, 1, 1)
         return (self.grid * weight).square().mean()
 
     def get_freqs(self):
