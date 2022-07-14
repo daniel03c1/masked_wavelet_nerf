@@ -7,15 +7,20 @@ import models.cosine_transform as ct
 
 
 class FreqGrid(nn.Module):
-    def __init__(self, resolution: int, n_chan: int, n_freq=None):
+    def __init__(self, resolution: int, n_chan: int, n_freq=None,
+                 freq_resolution=None):
         # assume 3 axes have the same resolution
         super().__init__()
         self.resolution = resolution
+        if freq_resolution is None:
+            freq_resolution = resolution
+        self.freq_resolution = freq_resolution
         self.n_chan = n_chan
 
         if n_freq is None:
-            n_freq = int(np.ceil(np.log2(resolution)))
+            n_freq = int(np.ceil(np.log2(freq_resolution)))
         self.n_freq = n_freq
+        self.mask = 1
 
         self.freqs = nn.Parameter(torch.linspace(0., 1, self.n_freq),
                                   requires_grad=False)
@@ -29,11 +34,19 @@ class FreqGrid(nn.Module):
         coords = coords.reshape(1, -1, 1, coords.shape[-1])
 
         # coefs: [3, 1, C, B]
-        coefs = F.grid_sample(self.grid, torch.cat([coords[..., (1, 2)],
+        '''
+        size = int(min(max(self.mask * self.resolution, 1), self.resolution))
+        mask = torch.zeros((self.resolution, self.resolution),
+                            device=coords.device)
+        mask[:size, :size] += 1
+        grid = ct.idctn(self.grid * mask, (-2, -1))
+        '''
+        grid = self.grid
+        coefs = F.grid_sample(grid, torch.cat([coords[..., (1, 2)],
                                                     coords[..., (0, 2)],
                                                     coords[..., (0, 1)]], 0),
                               mode='bilinear',
-                              padding_mode='reflection', align_corners=True)
+                              padding_mode='zeros', align_corners=True)
         coefs = coefs.squeeze(-1).permute(2, 1, 0) # [B, C*F, 3]
         coefs = coefs.reshape(-1, self.n_chan, self.n_freq, 3) # [B, C, F, 3]
 
@@ -44,14 +57,7 @@ class FreqGrid(nn.Module):
         outputs = torch.cos(torch.pi / self.resolution * (coords + 0.5)
                             * (self.get_freqs().unsqueeze(-1) + 0.5))
 
-        # version 0
-        # return outputs.sum(-1) # [B, C]
-
-        # version 1
-        # outputs = 2 * torch.einsum('BCFT,BFT->BCT', coefs, outputs)
-        # return outputs.reshape(-1, outputs.shape[1] * outputs.shape[2])
-
-        outputs = 2 * (coefs * outputs.unsqueeze(-3))
+        outputs = 2 * (coefs * outputs.unsqueeze(-3)) # [B, C, F, 3]
         return outputs.reshape(outputs.shape[0], -1)
 
     def compute_tv(self):
@@ -59,7 +65,8 @@ class FreqGrid(nn.Module):
         return (self.grid * weight).square().mean()
 
     def get_freqs(self):
-        return 2**(self.freqs.clamp(min=0, max=1)*np.log2(self.resolution)) - 1
+        return -1 + 2**(self.freqs.clamp(min=0, max=1)
+                        * np.log2(self.freq_resolution))
 
 
 class PREFFFT(nn.Module):

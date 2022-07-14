@@ -9,12 +9,14 @@ import torchvision.transforms as T
 from PIL import Image
 
 
-def get_cos_warmup_scheduler(optimizer, total_epoch, warmup_epoch):
+def get_cos_warmup_scheduler(optimizer, total_epoch, warmup_epoch,
+                             min_ratio=0.):
     def lr_lambda(epoch):
         if epoch < warmup_epoch:
             return (epoch + 1) / (warmup_epoch + 1)
-        return (1 + np.cos(np.math.pi * (epoch - warmup_epoch)
-                           / (total_epoch - warmup_epoch))) / 2
+        ratio = (1 + np.cos(np.math.pi * (epoch - warmup_epoch)
+                            / (total_epoch - warmup_epoch))) / 2
+        return min_ratio + (1-min_ratio) * ratio
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 
@@ -50,11 +52,13 @@ def init_lpips(net_name, device):
     return lpips.LPIPS(net=net_name, version='0.1').eval().to(device)
 
 
-def rgb_lpips(np_gt, np_im, net_name, device):
+def rgb_lpips(gt_rgb, pred_rgb, net_name, device):
     if net_name not in __LPIPS__:
         __LPIPS__[net_name] = init_lpips(net_name, device)
-    gt = torch.from_numpy(np_gt).permute([2, 0, 1]).contiguous().to(device)
-    im = torch.from_numpy(np_im).permute([2, 0, 1]).contiguous().to(device)
+    # gt = torch.from_numpy(np_gt).permute([2, 0, 1]).contiguous().to(device)
+    # im = torch.from_numpy(np_im).permute([2, 0, 1]).contiguous().to(device)
+    gt = gt_rgb.permute([2, 0, 1]).contiguous() # .to(device)
+    im = pred_rgb.permute([2, 0, 1]).contiguous() # .to(device)
     return __LPIPS__[net_name](gt, im, normalize=True).item()
 
 
