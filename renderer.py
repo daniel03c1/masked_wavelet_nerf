@@ -24,7 +24,23 @@ def render_rays_split(density_net, appearance_net, rays, chunk,
 
 def render_rays(density_net, appearance_net, rays, n_samples, bounding_box,
                 is_train=False, white_bg=True, near=2, far=7,
-                min_alpha_requirement=1e-4, normalize=True):
+                min_alpha_requirement=1e-4, normalize=True,
+                density_scale=25):
+    '''
+    density_net: a network that inputs a coordinate and outputs a density
+    appearance_net: a network that outputs RGB
+    rays: [..., 6] shaped tensor (3 for origin, 3 for direction)
+    n_samples: samples per ray
+    bounding_box: bounding box of the scene
+    is_train: whether to perturb the z_vals
+    white_bg:
+    near:
+    far:
+    min_alpha_requirement: if alpha of a coordinate does not exceed
+                           this threshold, its RGB will not be sampled
+    normalize: to normalize coordinates to [-1, 1]
+    density_scale: multiplier to the output of density (default: 25)
+    '''
     rays_o, rays_d = rays[..., :3], rays[..., 3:] # origins, viewdirs
 
     low_bbox = bounding_box.amin(0)
@@ -35,7 +51,6 @@ def render_rays(density_net, appearance_net, rays, n_samples, bounding_box,
     z_vals = torch.linspace(near, far, n_samples).unsqueeze(0).to(rays_o)
 
     if is_train:
-        # NeRF style
         mids = (z_vals[..., 1:] + z_vals[..., :-1]) / 2
         lower = torch.cat([z_vals[..., :1], mids], -1)
         upper = torch.cat([mids, z_vals[..., -1:]], -1)
@@ -57,7 +72,8 @@ def render_rays(density_net, appearance_net, rays, n_samples, bounding_box,
         pts = 2 * (pts - low_bbox) / bbox_size - 1
 
     if valid_rays.any():
-        sigma[valid_rays] = density_net(pts[valid_rays]).squeeze(-1)
+        sigma[valid_rays] = density_scale \
+                          * density_net(pts[valid_rays]).squeeze(-1)
 
     dists = F.pad(z_vals[..., 1:] - z_vals[..., :-1], [0, 1], value=1e10)
     dists = dists * torch.norm(rays_d, dim=-1, keepdim=True)

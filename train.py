@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 from dataLoader import dataset_dict
 from models import AppearanceNet, DensityNet
 from models.grid_based import FreqGrid, PREF
-from models.modules import MLP
+from models.modules import MLP, Softplus
 from opt import config_parser
 from renderer import *
 from utils import *
@@ -118,7 +118,7 @@ def reconstruction(args):
                                 nn.Linear(64, 64),
                                 nn.ReLU(inplace=True),
                                 nn.Linear(64, 1),
-                                nn.Softplus())
+                                Softplus(-10))
     density_net = DensityNet(density_net).cuda()
 
     appearance_net = AppearanceNet(
@@ -178,9 +178,9 @@ def reconstruction(args):
             scaler.scale(total_loss).backward(retain_graph=True)
 
         scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(
-            [p for p in density_net.parameters()]
-            + [p for p in appearance_net.parameters()], 10)
+        # torch.nn.utils.clip_grad_norm_(
+        #     [p for p in density_net.parameters()]
+        #     + [p for p in appearance_net.parameters()], 1)
         scaler.step(optimizer)
         scaler.update()
 
