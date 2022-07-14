@@ -2,12 +2,13 @@ import torch.nn as nn
 
 
 class DensityNet(nn.Module):
-    def __init__(self, net: nn.Sequential):
+    def __init__(self, net: nn.Sequential, density_scale=25):
         super().__init__()
         self.net = net
+        self.density_scale = density_scale
 
     def forward(self, *args, **kwargs):
-        return self.net(*args, **kwargs)
+        return self.net(*args, **kwargs).squeeze(-1) * self.density_scale
 
     def compute_tv(self):
         # compute total variation

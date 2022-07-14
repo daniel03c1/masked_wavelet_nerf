@@ -119,7 +119,7 @@ def reconstruction(args):
                                 nn.ReLU(inplace=True),
                                 nn.Linear(64, 1),
                                 Softplus(-10))
-    density_net = DensityNet(density_net).cuda()
+    density_net = DensityNet(density_net, density_scale=25).cuda()
 
     appearance_net = AppearanceNet(
         # nn.Sequential(PREF(256, 4), nn.Linear(4, 27)),
