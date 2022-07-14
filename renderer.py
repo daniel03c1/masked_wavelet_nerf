@@ -22,16 +22,20 @@ def render_rays_split(density_net, appearance_net, rays, chunk,
     return list(map(torch.cat, zip(*outputs)))
 
 
-def render_rays(density_net, appearance_net, rays, n_samples,
+def render_rays(density_net, appearance_net, rays, n_samples, bounding_box,
                 is_train=False, white_bg=True, near=2, far=7,
-                bounding_box=None, min_alpha_requirement=1e-4,
-                normalize=True):
+                min_alpha_requirement=1e-4, normalize=True):
     rays_o, rays_d = rays[..., :3], rays[..., 3:] # origins, viewdirs
+
+    low_bbox = bounding_box.amin(0)
+    high_bbox = bounding_box.amax(0)
+    bbox_size = high_bbox - low_bbox
 
     # z_vals
     z_vals = torch.linspace(near, far, n_samples).unsqueeze(0).to(rays_o)
 
     if is_train:
+        # NeRF style
         mids = (z_vals[..., 1:] + z_vals[..., :-1]) / 2
         lower = torch.cat([z_vals[..., :1], mids], -1)
         upper = torch.cat([mids, z_vals[..., -1:]], -1)
@@ -40,29 +44,23 @@ def render_rays(density_net, appearance_net, rays, n_samples,
     # [B, n_samples, 3]
     pts = rays_d[..., None, :] * z_vals[..., None] + rays_o[..., None, :]
 
-    dists = F.pad(z_vals[:, 1:] - z_vals[:, :-1], [0, 1], value=1e10)
-    dists = dists * torch.norm(rays_d, dim=-1, keepdim=True)
-
     viewdirs = F.normalize(rays_d, dim=-1).view(-1, 1, 3).expand(pts.shape)
 
     # TODO: alphamask
 
-    sigma = torch.zeros(pts.shape[:-1], device=pts.device)
+    sigma = torch.zeros_like(pts[..., 0])
     rgb = torch.zeros((*pts.shape[:2], 3), device=pts.device)
 
-    if bounding_box is not None:
-        low_bbox = bounding_box.amin(0)
-        high_bbox = bounding_box.amax(0)
-        bbox_size = high_bbox - low_bbox
+    valid_rays = ((low_bbox <= pts) & (pts <= high_bbox)).all(dim=-1)
 
-        valid_rays = ((low_bbox <= pts) & (pts <= high_bbox)).all(dim=-1)
+    if normalize:
+        pts = 2 * (pts - low_bbox) / bbox_size - 1
 
-        if normalize:
-            pts = 2 * (pts - low_bbox) / bbox_size - 1
-            rays_d *= 2 / bbox_size
+    if valid_rays.any():
+        sigma[valid_rays] = density_net(pts[valid_rays]).squeeze(-1)
 
-        if valid_rays.any():
-            sigma[valid_rays] = density_net(pts[valid_rays]).squeeze(-1)
+    dists = F.pad(z_vals[..., 1:] - z_vals[..., :-1], [0, 1], value=1e10)
+    dists = dists * torch.norm(rays_d, dim=-1, keepdim=True)
 
     # alpha & weights
     alpha = 1. - torch.exp(-sigma * dists)
@@ -74,9 +72,9 @@ def render_rays(density_net, appearance_net, rays, n_samples,
     if app_mask.any():
         rgb[app_mask] += appearance_net(pts[app_mask], viewdirs[app_mask])
 
-    rgb_map = torch.sum(weights[..., None] * rgb, -2)
     acc_map = torch.sum(weights, -1)
 
+    rgb_map = torch.sum(weights[..., None] * rgb, -2)
     if white_bg:
         rgb_map = rgb_map + (1. - acc_map[..., None])
     rgb_map = rgb_map.clamp(min=0, max=1)

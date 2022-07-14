@@ -8,8 +8,8 @@ from tqdm.auto import tqdm
 
 from dataLoader import dataset_dict
 from models import AppearanceNet, DensityNet
-from models.grid_based import FreqGrid
-from models.modules import MLP, Softplus
+from models.grid_based import FreqGrid, PREF
+from models.modules import MLP
 from opt import config_parser
 from renderer import *
 from utils import *
@@ -110,18 +110,23 @@ def reconstruction(args):
         tensorf.load(ckpt)
     '''
     # defining networks
-    density_net = nn.Sequential(FreqGrid(256, 2),
+    density_net = nn.Sequential(# PREF(256, 2),
+                                FreqGrid(256, 2),
+                                # nn.Linear(2, 64),
                                 nn.Linear(48, 64),
                                 nn.ReLU(inplace=True),
                                 nn.Linear(64, 64),
                                 nn.ReLU(inplace=True),
                                 nn.Linear(64, 1),
-                                Softplus(shift=-10))
+                                nn.Softplus())
     density_net = DensityNet(density_net).cuda()
 
     appearance_net = AppearanceNet(
+        # nn.Sequential(PREF(256, 4), nn.Linear(4, 27)),
         FreqGrid(256, 4),
-        MLP(96, include_view=True, feat_n_freq=0, pos_n_freq=args.pos_pe,
+        # MLP(27,
+        MLP(96,
+            include_view=True, feat_n_freq=0, pos_n_freq=args.pos_pe,
             view_n_freq=args.view_pe, hidden_dim=128, out_activation='sigmoid'))
     appearance_net = appearance_net.cuda()
 
@@ -139,14 +144,14 @@ def reconstruction(args):
                                          min_ratio=0.1)
     scaler = torch.cuda.amp.GradScaler()
 
-    PSNRs, PSNRs_test = [], [0]
+    PSNRs = []
 
-    TV_weight_density = args.TV_weight_density
     TV_weight_app = args.TV_weight_app
+    TV_weight_density = args.TV_weight_density
+    n_samples = args.n_samples
     print(f"TV_weight density: {TV_weight_density} appearance: {TV_weight_app}")
 
     pbar = tqdm(range(args.n_iters), miniters=args.progress_refresh_rate)
-    n_samples = args.n_samples
 
     for iteration in pbar:
         indices = torch.randint(len(allrays), (args.batch_size,)).cuda()
@@ -157,9 +162,8 @@ def reconstruction(args):
 
         with torch.cuda.amp.autocast(enabled=True):
             rgb_map, depth_map = render_rays(
-                density_net, appearance_net, rays_train, n_samples,
-                is_train=True, white_bg=white_bg, near=near,
-                far=far, bounding_box=bbox)
+                density_net, appearance_net, rays_train, n_samples, bbox,
+                is_train=True, white_bg=white_bg, near=near, far=far)
 
             loss = F.mse_loss(rgb_map, rgb_train)
 
@@ -176,7 +180,7 @@ def reconstruction(args):
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(
             [p for p in density_net.parameters()]
-            + [p for p in appearance_net.parameters()], 1)
+            + [p for p in appearance_net.parameters()], 10)
         scaler.step(optimizer)
         scaler.update()
 

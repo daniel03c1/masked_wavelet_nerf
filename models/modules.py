@@ -18,7 +18,7 @@ def get_activation(activation, **kwargs):
     if activation == 'relu':
         return nn.ReLU(inplace=True)
     if activation == 'softplus':
-        return Softplus(shift=-10) # to make Softplus(0) = 0
+        return Softplus() # shift=-10) # to make Softplus(0) = 0
     if activation == 'gelu':
         return nn.GELU()
 
@@ -143,8 +143,7 @@ class PosEncoding(nn.Module):
 
 # utils
 def positional_encoding(positions, freqs):
-    freq_bands = (2**torch.arange(freqs).float()).to(positions.device) # (F,)
-    pts = (positions[..., None] * freq_bands).reshape(
-        positions.shape[:-1] + (freqs * positions.shape[-1], )) # (..., DF)
+    freq_bands = (torch.pi*2**torch.arange(freqs).float()).to(positions.device)
+    pts = (positions[..., None] * freq_bands).reshape(*positions.shape[:-1], -1)
     return torch.cat([torch.sin(pts), torch.cos(pts)], dim=-1)
 

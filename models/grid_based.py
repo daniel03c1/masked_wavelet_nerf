@@ -20,10 +20,11 @@ class FreqGrid(nn.Module):
         if n_freq is None:
             n_freq = int(np.ceil(np.log2(freq_resolution)))
         self.n_freq = n_freq
-        self.mask = 1
 
-        self.freqs = nn.Parameter(torch.linspace(0., 1, self.n_freq),
+        # self.freqs = nn.Parameter(torch.linspace(0., 1, self.n_freq),
+        self.freqs = nn.Parameter(torch.linspace(0., 1, 2*self.n_freq-1),
                                   requires_grad=False)
+        self.expander = nn.Sequential(nn.Linear(self.n_freq, self.n_freq-1))
 
         self.grid = nn.Parameter(nn.Parameter(
             torch.zeros(3, n_chan*self.n_freq, resolution, resolution),
@@ -34,21 +35,19 @@ class FreqGrid(nn.Module):
         coords = coords.reshape(1, -1, 1, coords.shape[-1])
 
         # coefs: [3, 1, C, B]
-        '''
-        size = int(min(max(self.mask * self.resolution, 1), self.resolution))
-        mask = torch.zeros((self.resolution, self.resolution),
-                            device=coords.device)
-        mask[:size, :size] += 1
-        grid = ct.idctn(self.grid * mask, (-2, -1))
-        '''
         grid = self.grid
         coefs = F.grid_sample(grid, torch.cat([coords[..., (1, 2)],
-                                                    coords[..., (0, 2)],
-                                                    coords[..., (0, 1)]], 0),
+                                               coords[..., (0, 2)],
+                                               coords[..., (0, 1)]], 0),
                               mode='bilinear',
                               padding_mode='zeros', align_corners=True)
         coefs = coefs.squeeze(-1).permute(2, 1, 0) # [B, C*F, 3]
         coefs = coefs.reshape(-1, self.n_chan, self.n_freq, 3) # [B, C, F, 3]
+
+        final_coefs = torch.empty(tuple(coefs.shape[:-2]) + (2*self.n_freq-1, 3),
+                                  dtype=coefs.dtype, device=coefs.dtype)
+        final_coefs[..., ::2, :] = coefs
+        final_coefs[..., 1::2, :] = self.expander(coefs.permute(0, 1, 3, 2)).permute(0, 1, 3, 2)
 
         # numerical integration
         coords = coords.squeeze(0) # [B, 1, 3]
@@ -61,7 +60,8 @@ class FreqGrid(nn.Module):
         return outputs.reshape(outputs.shape[0], -1)
 
     def compute_tv(self):
-        weight = self.get_freqs().repeat(self.n_chan).reshape(-1, 1, 1)
+        # weight = self.get_freqs().repeat(self.n_chan).reshape(-1, 1, 1)
+        weight = self.get_freqs()[..., ::2].repeat(self.n_chan).reshape(-1, 1, 1)
         return (self.grid * weight).square().mean()
 
     def get_freqs(self):
@@ -69,7 +69,7 @@ class FreqGrid(nn.Module):
                         * np.log2(self.freq_resolution))
 
 
-class PREFFFT(nn.Module):
+class PREF(nn.Module):
     def __init__(self, res, ch):
         """
         INPUTS
@@ -77,25 +77,23 @@ class PREFFFT(nn.Module):
             ch: channel
         """
         super().__init__()
+        if not hasattr(res, 'len'):
+            res = np.array([res, res, res])
         reduced_res = (np.ceil(np.log2(res))).astype('int')
         self.res = res
         self.ch = ch
         self.reduced_res = reduced_res
         self.mask = 128
-
-        '''
+ 
         self.phasor = nn.ParameterList([
-            nn.Parameter(0.001*torch.randn((1, 2*reduced_res[0]*ch, res[1], res[2]),
-                                     dtype=torch.float32),
-                               requires_grad=True),
-            nn.Parameter(0.001*torch.randn((1, 2*reduced_res[1]*ch, res[0], res[2]),
-                                     dtype=torch.float32),
-                               requires_grad=True),
-            nn.Parameter(0.001*torch.randn((1, 2*reduced_res[2]*ch, res[0], res[1]),
-                                     dtype=torch.float32),
-                               requires_grad=True)])
-        '''
+        nn.Parameter(torch.zeros((1, 2*reduced_res[0]*ch, res[1], res[2]),
+                                 dtype=torch.float32), requires_grad=True),
+        nn.Parameter(torch.zeros((1, 2*reduced_res[1]*ch, res[0], res[2]),
+                                 dtype=torch.float32), requires_grad=True),
+        nn.Parameter(torch.zeros((1, 2*reduced_res[2]*ch, res[0], res[1]),
+                                 dtype=torch.float32), requires_grad=True)]) 
 
+        '''
         self.phasor = nn.ParameterList([
             nn.Parameter(torch.zeros((1, ch*reduced_res[0], res[1], res[2], 2),
                                      dtype=torch.float32),
@@ -106,24 +104,25 @@ class PREFFFT(nn.Module):
             nn.Parameter(torch.zeros((1, ch*reduced_res[2], res[0], res[1], 2),
                                      dtype=torch.float32),
                                requires_grad=True)])
+        '''
 
     def forward(self, inputs):
         inputs = inputs.reshape(1, 1, *inputs.shape) # [B, 3] to [1, 1, B, 3]
         Pu, Pv, Pw = self.phasor
 
-        mask = torch.zeros((self.res[0], self.res[1], 1)).to(Pu)
-        mask[:self.mask, :self.mask] += 1
-        Pu = Pu * mask
-        Pv = Pv * mask
-        Pw = Pw * mask
+        # mask = torch.zeros((self.res[0], self.res[1], 1)).to(Pu)
+        # mask[:self.mask, :self.mask] += 1
+        # Pu = Pu * mask
+        # Pv = Pv * mask
+        # Pw = Pw * mask
 
+        '''
         Pu = torch.fft.ifft2(torch.view_as_complex(Pu))
         Pu = torch.view_as_real(Pu).permute(0, 1, 4, 2, 3).reshape(1, -1, self.res[0], self.res[1])
         Pv = torch.fft.ifft2(torch.view_as_complex(Pv))
         Pv = torch.view_as_real(Pv).permute(0, 1, 4, 2, 3).reshape(1, -1, self.res[0], self.res[1])
         Pw = torch.fft.ifft2(torch.view_as_complex(Pw))
         Pw = torch.view_as_real(Pw).permute(0, 1, 4, 2, 3).reshape(1, -1, self.res[0], self.res[1])
-        '''
         '''
 
         Pu = F.grid_sample(Pu, inputs[..., (1, 2)], mode='bilinear',
@@ -157,6 +156,7 @@ class PREFFFT(nn.Module):
         return out.real
 
     def compute_tv(self):
+        '''
         freqs0 = 2 ** torch.arange(self.reduced_res[0]).to(self.phasor[0]) - 1
         freqs1 = torch.arange(self.res[0]).to(freqs0)
         weight = torch.stack(torch.meshgrid(freqs0, freqs1, freqs1), -1)
@@ -169,5 +169,4 @@ class PREFFFT(nn.Module):
         return (self.phasor[0]*weight).square().mean() \
              + (self.phasor[1]*weight).square().mean() \
              + (self.phasor[2]*weight).square().mean()
-        '''
 
