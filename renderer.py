@@ -118,9 +118,19 @@ def evaluation(density_net, appearance_net, test_dataset, save_path,
         lpips_alex = lpips.LPIPS(net='alex', version='0.1').eval().cuda()
         lpips_vgg = lpips.LPIPS(net='vgg', version='0.1').eval().cuda()
 
-    for idx, samples in tqdm(enumerate(test_dataset.all_rays[::img_interval])):
+    try:
+        gt_exist = len(test_dataset.all_rgbs) > 0
+    except Exception:
+        gt_exist = False
+
+    for idx in tqdm(idxs):
         W, H = test_dataset.img_wh
-        rays = samples.view(-1, samples.shape[-1]).cuda(non_blocking=True)
+
+        rays = test_dataset.all_rays[idx]
+        rays = rays.view(-1, rays.shape[-1]).cuda(non_blocking=True)
+        if gt_exist:
+            gt_rgb = test_dataset.all_rgbs[idx].view(H, W, 3) \
+                                               .cuda(non_blocking=True)
 
         with torch.no_grad(): 
             near, far = near_far
@@ -134,8 +144,7 @@ def evaluation(density_net, appearance_net, test_dataset, save_path,
 
         depth_map, _ = visualize_depth_numpy(depth_map.cpu().numpy(), near_far)
 
-        if len(test_dataset.all_rgbs):
-            gt_rgb = test_dataset.all_rgbs[idxs[idx]].view(H, W, 3).cuda()
+        if gt_exist:
             loss = F.mse_loss(rgb_map, gt_rgb).cpu()
             PSNRs.append(-10.0 * np.log(loss.item()) / np.log(10.0))
 
@@ -177,6 +186,7 @@ def evaluation(density_net, appearance_net, test_dataset, save_path,
     return PSNRs
 
 
+# TODO: replace tensorf
 @torch.no_grad()
 def evaluation_path(test_dataset,tensorf, c2ws, save_path=None,
                     n_vis=5, prtx='', n_samples=-1, white_bg=False,
