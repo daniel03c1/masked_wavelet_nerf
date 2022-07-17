@@ -110,24 +110,20 @@ def reconstruction(args):
         tensorf.load(ckpt)
     '''
     # defining networks
-    density_net = nn.Sequential(# PREF(256, 2),
-                                FreqGrid(256, 2),
-                                # nn.Linear(2, 64),
+    density_net = nn.Sequential(FreqGrid(256, 1, 16),
                                 nn.Linear(48, 64),
                                 nn.ReLU(inplace=True),
                                 nn.Linear(64, 64),
                                 nn.ReLU(inplace=True),
                                 nn.Linear(64, 1),
                                 Softplus(-10))
-    density_net = DensityNet(density_net, density_scale=25).cuda()
+    density_net = DensityNet(density_net).cuda()
 
     appearance_net = AppearanceNet(
-        # nn.Sequential(PREF(256, 4), nn.Linear(4, 27)),
-        FreqGrid(256, 4),
-        # MLP(27,
-        MLP(96,
-            include_view=True, feat_n_freq=0, pos_n_freq=args.pos_pe,
-            view_n_freq=args.view_pe, hidden_dim=128, out_activation='sigmoid'))
+        FreqGrid(256, 2, 16),
+        MLP(96, include_view=True,
+            feat_n_freq=0, pos_n_freq=args.pos_pe, view_n_freq=args.view_pe,
+            hidden_dim=128, out_activation='sigmoid'))
     appearance_net = appearance_net.cuda()
 
     print(density_net)
@@ -178,9 +174,6 @@ def reconstruction(args):
             scaler.scale(total_loss).backward(retain_graph=True)
 
         scaler.unscale_(optimizer)
-        # torch.nn.utils.clip_grad_norm_(
-        #     [p for p in density_net.parameters()]
-        #     + [p for p in appearance_net.parameters()], 1)
         scaler.step(optimizer)
         scaler.update()
 
