@@ -12,10 +12,10 @@ class FreqGrid(nn.Module):
         # assume 3 axes have the same resolution
         super().__init__()
         self.resolution = resolution
+        self.n_chan = n_chan
         if freq_resolution is None:
             freq_resolution = resolution
         self.freq_resolution = freq_resolution
-        self.n_chan = n_chan
 
         if n_freq is None:
             n_freq = int(np.ceil(np.log2(freq_resolution)))
@@ -40,15 +40,23 @@ class FreqGrid(nn.Module):
                               mode='bilinear',
                               padding_mode='zeros', align_corners=True)
         coefs = coefs.squeeze(-1).permute(2, 1, 0) # [B, C*F, 3]
-        coefs = coefs.reshape(-1, self.n_chan, self.n_freq, 3) # [B, C, F, 3]
+        coefs = coefs.reshape(coefs.size(0), self.n_chan, -1, 3) # [B, C, F, 3]
 
         # numerical integration
         coords = coords.squeeze(0) # [B, 1, 3]
+
+        '''
+        # POS ENCODING
+        outputs = torch.stack(
+            [torch.cos(torch.pi * coords * self.get_freqs().unsqueeze(-1)),
+             torch.sin(torch.pi * coords * self.get_freqs().unsqueeze(-1))], 1)
+
+        outputs = 2 * (coefs * outputs.repeat(1, self.n_chan//2, 1, 1))
+        '''
+
         coords = (coords + 1) / 2 * (self.resolution - 1)
-
-        outputs = torch.cos(torch.pi / self.resolution * (coords + 0.5)
-                            * (self.get_freqs().unsqueeze(-1) + 0.5))
-
+        outputs = torch.cos(torch.pi / self.resolution * coords
+                            * self.get_freqs().unsqueeze(-1))
         outputs = 2 * (coefs * outputs.unsqueeze(-3)) # [B, C, F, 3]
         return outputs.reshape(outputs.shape[0], -1)
 
