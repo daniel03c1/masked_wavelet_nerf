@@ -33,27 +33,6 @@ class Softplus(nn.Module):
 
 
 """         MODULES         """
-def get_module(shadingMode, in_dim, pos_pe, view_pe, fea_pe, hidden_dim):
-    if shadingMode == 'MLP_PE':
-        return MLP(in_dim, include_pos=True, include_view=True,
-                   pos_n_freq=pos_pe, view_n_freq=view_pe,
-                   hidden_dim=hidden_dim)
-    elif shadingMode == 'MLP_Fea':
-        return MLP(in_dim, include_view=True, feat_n_freq=fea_pe,
-                   view_n_freq=view_pe, hidden_dim=hidden_dim)
-    elif shadingMode == 'MLP':
-        return MLP(in_dim, include_view=True, view_n_freq=view_pe,
-                   hidden_dim=hidden_dim)
-    elif shadingMode == 'SH':
-        return SHRender
-    elif shadingMode == 'RGB':
-        assert in_dim == 3
-        return RGBRender
-    else:
-        raise ValueError(f"Unrecognized shading module: {shadingMode}")
-
-
-# modules
 class MLP(nn.Module):
     def __init__(self, feat_dim, out_dim=3,
                  include_feat=True, include_pos=False, include_view=False,
@@ -142,7 +121,6 @@ class PosEncoding(nn.Module):
         return torch.cat(outs, -1)
 
 
-# utils
 def positional_encoding(positions, freqs):
     freq_bands = (torch.pi*2**torch.arange(freqs).float()).to(positions.device)
     pts = (positions[..., None] * freq_bands).reshape(*positions.shape[:-1], -1)
