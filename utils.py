@@ -44,22 +44,27 @@ def cal_n_samples(reso, step_ratio=0.5):
     return int(np.linalg.norm(reso)/step_ratio)
 
 
-__LPIPS__ = {}
-def init_lpips(net_name, device):
-    assert net_name in ['alex', 'vgg']
-    import lpips
-    print(f'init_lpips: lpips_{net_name}')
-    return lpips.LPIPS(net=net_name, version='0.1').eval().to(device)
+def remeasure_bbox(density_net, bbox, resolution=256, kernel_size=3,
+                   alpha_threshold=1/255):
+    device = bbox.device
+    bbox_min = bbox.amin(0)
+    bbox_max = bbox.amax(0)
 
+    grid = torch.stack(torch.meshgrid(
+        torch.linspace(bbox_min[0], bbox_max[0], resolution, device=device),
+        torch.linspace(bbox_min[1], bbox_max[1], resolution, device=device),
+        torch.linspace(bbox_min[2], bbox_max[2], resolution, device=device)),
+    -1)
 
-def rgb_lpips(gt_rgb, pred_rgb, net_name, device):
-    if net_name not in __LPIPS__:
-        __LPIPS__[net_name] = init_lpips(net_name, device)
-    # gt = torch.from_numpy(np_gt).permute([2, 0, 1]).contiguous().to(device)
-    # im = torch.from_numpy(np_im).permute([2, 0, 1]).contiguous().to(device)
-    gt = gt_rgb.permute([2, 0, 1]).contiguous() # .to(device)
-    im = pred_rgb.permute([2, 0, 1]).contiguous() # .to(device)
-    return __LPIPS__[net_name](gt, im, normalize=True).item()
+    step = (bbox[1] - bbox[0]).amin() / resolution
+    alpha = 1 - torch.exp(-density_net(grid.reshape(-1, 3)).clamp(min=0)
+                          * step).reshape(*grid.shape[:-1])
+    alpha = F.max_pool3d(alpha.reshape(1, 1, *alpha.shape), kernel_size,
+                         stride=1, padding=kernel_size//2)
+    indices = torch.nonzero(alpha[0, 0] > alpha_threshold)
+    new_bbox = torch.stack([indices.amin(0), indices.amax(0)]) / (resolution-1)
+    new_bbox = bbox_min + (bbox_max - bbox_min) * new_bbox
+    return new_bbox
 
 
 def findItem(items, target):
@@ -116,7 +121,7 @@ def rgb_ssim(img0, img1, max_val, filter_size=11, filter_sigma=1.5,
 
 
 class TVLoss(nn.Module):
-    def __init__(self,TVLoss_weight=1):
+    def __init__(self, TVLoss_weight=1):
         super(TVLoss,self).__init__()
         self.TVLoss_weight = TVLoss_weight
 
