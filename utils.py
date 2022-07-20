@@ -21,11 +21,11 @@ def get_cos_warmup_scheduler(optimizer, total_epoch, warmup_epoch,
 
 
 def mse2psnr(x):
-    return -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
+    return -10. * torch.log10(x.clamp(min=1e-10))
 
 
 def mse2psnr_np(x):
-    return -10. * np.log(x) / np.log(10.0)
+    return -10 * np.log10(max(x, 1e-10))
 
 
 def init_log(log, keys):
@@ -34,19 +34,10 @@ def init_log(log, keys):
     return log
 
 
-def N_to_reso(n_voxels, bbox):
-    xyz_min, xyz_max = bbox
-    voxel_size = ((xyz_max - xyz_min).prod() / n_voxels).pow(1 / 3)
-    return ((xyz_max - xyz_min) / voxel_size).long().tolist()
-
-
-def cal_n_samples(reso, step_ratio=0.5):
-    return int(np.linalg.norm(reso)/step_ratio)
-
-
 def remeasure_bbox(density_net, bbox, resolution=256, kernel_size=3,
                    alpha_threshold=1/255):
     device = bbox.device
+
     bbox_min = bbox.amin(0)
     bbox_max = bbox.amax(0)
 
@@ -62,16 +53,12 @@ def remeasure_bbox(density_net, bbox, resolution=256, kernel_size=3,
     alpha = F.max_pool3d(alpha.reshape(1, 1, *alpha.shape), kernel_size,
                          stride=1, padding=kernel_size//2)
     indices = torch.nonzero(alpha[0, 0] > alpha_threshold)
-    new_bbox = torch.stack([indices.amin(0), indices.amax(0)]) / (resolution-1)
-    new_bbox = bbox_min + (bbox_max - bbox_min) * new_bbox
-    return new_bbox
 
+    if indices.size(0) > 0:
+        bbox = torch.stack([indices.amin(0), indices.amax(0)]) / (resolution-1)
+        bbox = bbox_min + (bbox_max - bbox_min) * bbox
 
-def findItem(items, target):
-    for one in items:
-        if one[:len(target)] == target:
-            return one
-    return None
+    return bbox
 
 
 ''' Evaluation metrics (ssim, lpips) '''
@@ -120,33 +107,8 @@ def rgb_ssim(img0, img1, max_val, filter_size=11, filter_sigma=1.5,
     return ssim_map if return_map else ssim
 
 
-class TVLoss(nn.Module):
-    def __init__(self, TVLoss_weight=1):
-        super(TVLoss,self).__init__()
-        self.TVLoss_weight = TVLoss_weight
-
-    def forward(self,x):
-        batch_size = x.size()[0]
-        h_x = x.size()[2]
-        w_x = x.size()[3]
-        count_h = self._tensor_size(x[:,:,1:,:])
-        count_w = self._tensor_size(x[:,:,:,1:])
-        h_tv = torch.pow((x[:,:,1:,:]-x[:,:,:h_x-1,:]),2).sum()
-        w_tv = torch.pow((x[:,:,:,1:]-x[:,:,:,:w_x-1]),2).sum()
-        return self.TVLoss_weight*2*(h_tv/count_h+w_tv/count_w)/batch_size
-
-    def _tensor_size(self,t):
-        return t.size()[1]*t.size()[2]*t.size()[3]
-
-
-def convert_sdf_samples_to_ply(
-    pytorch_3d_sdf_tensor,
-    ply_filename_out,
-    bbox,
-    level=0.5,
-    offset=None,
-    scale=None,
-):
+def convert_sdf_samples_to_ply(pytorch_3d_sdf_tensor, ply_filename_out, bbox,
+                               level=0.5, offset=None, scale=None):
     """
     Convert sdf samples to .ply
 
