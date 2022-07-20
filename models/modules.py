@@ -58,7 +58,7 @@ class MLP(nn.Module):
     def __init__(self, feat_dim, out_dim=3,
                  include_feat=True, include_pos=False, include_view=False,
                  feat_n_freq=0, pos_n_freq=0, view_n_freq=0,
-                 n_hidden_layers=1, hidden_dim=128,
+                 n_layers=3, hidden_dim=128,
                  inner_activation='relu', out_activation=None):
         super().__init__()
 
@@ -73,12 +73,13 @@ class MLP(nn.Module):
                 + 3 * (include_pos + 2 * pos_n_freq) \
                 + 3 * (include_view + 2 * view_n_freq)
 
-        mlp = [nn.Linear(in_size, hidden_dim), get_activation(inner_activation)]
-        for i in range(n_hidden_layers):
-            mlp.extend([nn.Linear(hidden_dim, hidden_dim),
-                        get_activation(inner_activation)])
-        mlp.extend([nn.Linear(hidden_dim, out_dim),
-                    get_activation(out_activation)])
+        mlp = [nn.Linear(in_size, hidden_dim if n_layers > 1 else out_dim)]
+        for i in range(n_layers-1):
+            mlp.extend([get_activation(inner_activation),
+                        nn.Linear(hidden_dim,
+                                  hidden_dim if i < n_layers - 2 else out_dim)])
+        mlp.append(get_activation(out_activation))
+
         self.mlp = nn.Sequential(*mlp)
         nn.init.constant_(self.mlp[-2].bias, 0)
 
