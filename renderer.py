@@ -24,7 +24,7 @@ def render_rays_split(density_net, appearance_net, rays, chunk,
 
 def render_rays(density_net, appearance_net, rays, n_samples, bounding_box,
                 is_train=False, white_bg=True, near=2, far=7,
-                min_alpha_requirement=1e-4, normalize=True):
+                min_alpha_requirement=1e-4, normalize=False):
     '''
     density_net: a network that inputs a coordinate and outputs a density
     appearance_net: a network that outputs RGB
@@ -41,9 +41,9 @@ def render_rays(density_net, appearance_net, rays, n_samples, bounding_box,
     '''
     rays_o, rays_d = rays[..., :3], rays[..., 3:] # origins, viewdirs
 
-    low_bbox = bounding_box.amin(0)
-    high_bbox = bounding_box.amax(0)
-    bbox_size = high_bbox - low_bbox
+    bbox_low = bounding_box.amin(0)
+    bbox_high = bounding_box.amax(0)
+    bbox_size = bbox_high - bbox_low
 
     # z_vals
     z_vals = torch.linspace(near, far, n_samples).unsqueeze(0).to(rays_o)
@@ -64,10 +64,10 @@ def render_rays(density_net, appearance_net, rays, n_samples, bounding_box,
     sigma = torch.zeros_like(pts[..., 0])
     rgb = torch.zeros((*pts.shape[:2], 3), device=pts.device)
 
-    valid_rays = ((low_bbox <= pts) & (pts <= high_bbox)).all(dim=-1)
+    valid_rays = ((bbox_low <= pts) & (pts <= bbox_high)).all(dim=-1)
 
     if normalize:
-        pts = 2 * (pts - low_bbox) / bbox_size - 1
+        pts = 2 * (pts - bbox_low) / bbox_size - 1
 
     if valid_rays.any():
         sigma[valid_rays] = density_net(pts[valid_rays])
