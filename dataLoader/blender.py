@@ -1,6 +1,7 @@
 import json
 import os
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms as T
 from tqdm import tqdm
@@ -21,10 +22,10 @@ class BlenderDataset(torch.utils.data.Dataset):
         self.transform = T.ToTensor()
 
         self.scene_bbox = torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]])
-        self.blender2opencv = np.array([[ 1, 0, 0, 0],
-                                        [ 0,-1, 0, 0],
-                                        [ 0, 0,-1, 0],
-                                        [ 0, 0, 0, 1]])
+        self.blender2opencv = torch.tensor([[ 1, 0, 0, 0],
+                                            [ 0,-1, 0, 0],
+                                            [ 0, 0,-1, 0],
+                                            [ 0, 0, 0, 1]], dtype=torch.float32)
         self.read_meta()
         self.define_proj_mat()
 
@@ -48,8 +49,8 @@ class BlenderDataset(torch.utils.data.Dataset):
         # ray directions for all pixels, same for all images (same H, W, focal)
         # (h, w, 3)
         self.directions = get_ray_directions(h, w, [self.focal,self.focal])
-        self.directions = self.directions \
-                        / torch.norm(self.directions, dim=-1, keepdim=True)
+        self.directions = F.normalize(self.directions, dim=-1)
+
         self.intrinsics = torch.tensor([[self.focal, 0, w/2],
                                         [0, self.focal, h/2],
                                         [0, 0, 1]]).float()
@@ -67,15 +68,15 @@ class BlenderDataset(torch.utils.data.Dataset):
 
         for i in tqdm(idxs, desc=f'Loading data {self.split} ({len(idxs)})'):
             frame = self.meta['frames'][i]
-            pose = np.array(frame['transform_matrix']) @ self.blender2opencv
-            c2w = torch.FloatTensor(pose)
+            c2w = torch.tensor(frame['transform_matrix']) @ self.blender2opencv
             self.poses += [c2w]
 
-            image_path = os.path.join(self.root_dir, f"{frame['file_path']}.png")
+            image_path = os.path.join(self.root_dir,
+                                      f"{frame['file_path']}.png")
             self.image_paths += [image_path]
             img = Image.open(image_path)
 
-            if self.downsample!=1.0:
+            if self.downsample != 1.0:
                 img = img.resize(self.img_wh, Image.LANCZOS)
             img = self.transform(img)  # (4, h, w)
             img = img.view(4, -1).permute(1, 0)  # (h*w, 4) RGBA
