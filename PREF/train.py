@@ -24,9 +24,9 @@ class SimpleSampler:
         self.ids = None
 
     def nextids(self):
-        self.curr+=self.batch
+        self.curr += self.batch
         if self.curr + self.batch > self.total:
-            self.ids = torch.LongTensor(np.random.permutation(self.total))
+            self.ids = torch.randperm(self.total).cuda()
             self.curr = 0
         return self.ids[self.curr:self.curr+self.batch]
 
@@ -179,6 +179,8 @@ def reconstruction(args, return_bbox=False, return_memory=False, bbox_only=False
     allrays, allrgbs = train_dataset.all_rays, train_dataset.all_rgbs
     if not args.ndc_ray:
         allrays, allrgbs = phasorf.filtering_rays(allrays, allrgbs, bbox_only=True)
+    allrays = allrays.cuda()
+    allrgbs = allrgbs.cuda()
     trainingSampler = SimpleSampler(allrays.shape[0], args.batch_size)
 
 
@@ -266,6 +268,8 @@ def reconstruction(args, return_bbox=False, return_memory=False, bbox_only=False
                 # filter rays outside the bbox
                 allrays,allrgbs = phasorf.filtering_rays(allrays,allrgbs)
                 trainingSampler = SimpleSampler(allrgbs.shape[0], args.batch_size)
+                allrays = allrays.cuda()
+                allrgbs = allrgbs.cuda()
 
         # TODO:
         if upsamp_list is not None and iteration in upsamp_list:
