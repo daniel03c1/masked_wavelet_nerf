@@ -128,7 +128,7 @@ def reconstruction(args, return_bbox=False, return_memory=False,
     json.dump(args.__dict__, open(f'{logfolder}/config.json',mode='w'),indent=2)
 
     # init parameters
-    if not bbox_only and args.dataset_name=='blender':
+    if not bbox_only and args.dataset_name == 'blender':
         # use tight bbox pre-extracted and stored in misc.py,
         # which takes 2k iters
         data = args.datadir.split('/')[-1]
@@ -186,7 +186,7 @@ def reconstruction(args, return_bbox=False, return_memory=False,
 
     optimizer = torch.optim.Adam(grad_vars, betas=(0.9,0.99))
 
-    #linear in logrithmic space
+    # linear in logrithmic space
     if upsamp_list:
         N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.N_voxel_init), 
             np.log(args.N_voxel_final), len(upsamp_list)+1))).long()).tolist()[1:]
@@ -230,10 +230,6 @@ def reconstruction(args, return_bbox=False, return_memory=False,
             summary_writer.add_scalar('train/reg_tv_density',
                                       loss_tv.detach().item(),
                                       global_step=iteration)
-
-        # mask
-        # total_loss += 1e-5 * sum([(m * (m>=0)).abs().mean() for m in phasorf.den_mask])
-        # total_loss += 1e-5 * sum([(m * (m>=0)).abs().mean() for m in phasorf.app_mask])
 
         if TV_weight_app > 0:
             TV_weight_app *= lr_factor
