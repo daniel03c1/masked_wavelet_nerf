@@ -1,14 +1,15 @@
 import math
-import pdb
+import torch.nn as nn
+import torch.nn.functional as F
 from torch.autograd import grad
 
+from .cosine_transform import dctn, idctn
 from .phasoBase import *
 from .utils import positional_encoding
 from .utils_fft import (
     getMask_fft, getMask, grid_sample, grid_sample_cmplx, irfft, rfft,
     batch_irfft
 )
-from .cosine_transform import idctn
 
 
 class CPhasoMLP(PhasorBase):
@@ -17,25 +18,30 @@ class CPhasoMLP(PhasorBase):
 
     def init_phasor_volume(self, res, device):
         """ initialize volume """
-        # using a dilated phasor volume 
-        self.axis = [
-            torch.tensor([0.]+[2**i for i in torch.arange(d-1)],
-                         device=self.device)
-            for d in self.app_num_comp]
+        self.axis = [torch.tensor([0.]+[2**i for i in torch.arange(d-1)],
+                                  device=self.device)
+                     for d in self.app_num_comp]
 
         self.ktraj = self.compute_ktraj(self.axis, self.gridSize)
         self.ktraj_den = self.compute_ktraj(
             self.axis, (self.gridSize * self.den_scale).long())
 
-        self.den = torch.nn.ParameterList(
+        self.den = nn.ParameterList(
             self.init_(self.den_num_comp,
                        (self.gridSize * self.den_scale).long(),
                        ksize=self.den_ksize))
-        breakpoint()
-        self.app = torch.nn.ParameterList(
+        self.app = nn.ParameterList(
             self.init_(self.app_num_comp,
                        (self.gridSize * self.app_scale).long(),
                        ksize=self.app_ksize))
+
+        # mask
+        self.den_mask = nn.ParameterList(
+            # [nn.Parameter(torch.zeros_like(d[0, 0])) for d in self.den])
+            [nn.Parameter(torch.zeros_like(d)) for d in self.den])
+        self.app_mask = nn.ParameterList(
+            # [nn.Parameter(torch.zeros_like(d[0, 0])) for d in self.app])
+            [nn.Parameter(torch.zeros_like(d)) for d in self.app])
 
         den_outdim = self.den_ksize * 3
         app_outdim = self.app_ksize * 3
@@ -47,17 +53,14 @@ class CPhasoMLP(PhasorBase):
         elif self.app_aug == 'flip++':
             app_outdim = app_outdim * 4
 
-        self.basis_mat = torch.nn.Linear(
+        self.basis_mat = nn.Linear(
             app_outdim, self.app_dim, bias=False).to(device)
-        self.alpha_params = torch.nn.Parameter(
+        self.alpha_params = nn.Parameter(
             torch.tensor([self.alpha_init]).to(device))
-        self.beta = torch.nn.Parameter(
-            torch.tensor([self.alpha_init]).to(device))
-        self.mlp = torch.nn.Sequential(
-            torch.nn.Linear(den_outdim, 64),
-            torch.nn.ReLU(inplace=True),
-            torch.nn.Linear(64, 1)
-        ).to(device)
+        self.beta = nn.Parameter(torch.tensor([self.alpha_init]).to(device))
+        self.mlp = nn.Sequential(nn.Linear(den_outdim, 64),
+                                 nn.ReLU(inplace=True),
+                                 nn.Linear(64, 1)).to(device)
         print(self)
 
     @torch.no_grad()
@@ -87,12 +90,12 @@ class CPhasoMLP(PhasorBase):
         fz = torch.zeros(1, ksize, Nx, Ny, d3, dtype=torch.float32,
                          device=self.device)
 
-        return [torch.nn.Parameter(fx), torch.nn.Parameter(fy),
-                torch.nn.Parameter(fz)]
+        return [nn.Parameter(fx), nn.Parameter(fy), nn.Parameter(fz)]
 
     def compute_densityfeature(self, xyz_sampled):
+        # sigma_feature = self.compute_fft(self.density, xyz_sampled)
         sigma_feature = self.compute_fft(self.density, xyz_sampled,
-                                         interp=False)
+                                         self.den_mask)
         return self.mlp(sigma_feature.T).T
 
     def feature2density(self, density_features):
@@ -103,76 +106,111 @@ class CPhasoMLP(PhasorBase):
             return F.relu(density_features)
 
     def compute_appfeature(self, xyz_sampled):
+        # app_points = self.compute_fft(self.appearance, xyz_sampled)
         app_points = self.compute_fft(self.appearance, xyz_sampled,
-                                      interp=False)
+                                      self.app_mask)
         if self.app_aug == 'flip':
-            aug = self.compute_fft(self.appearance,
-                                   xyz_sampled.flip(-1), interp=False)
+            aug = self.compute_fft(self.appearance, xyz_sampled.flip(-1))
             app_points = torch.cat([app_points, aug], dim=0)
         elif self.app_aug == 'normal':
             aug = self.compute_normal(xyz_sampled)
             app_points = torch.cat([app_points, aug], dim=0)
         elif self.app_aug == 'flip++':
-            aug1 = self.compute_fft(self.appearance, xyz_sampled.flip(-1), interp=False)
-            aug2 = self.compute_fft(self.appearance, -xyz_sampled, interp=False)
-            aug3 = self.compute_fft(self.appearance, -xyz_sampled.flip(-1), interp=False)
+            aug1 = self.compute_fft(self.appearance, xyz_sampled.flip(-1))
+            aug2 = self.compute_fft(self.appearance, -xyz_sampled)
+            aug3 = self.compute_fft(self.appearance, -xyz_sampled.flip(-1))
             app_points = torch.cat([app_points, aug1, aug2, aug3], dim=0)
         elif self.app_aug != 'none':
             raise NotImplementedError(f'{self.app_aug} not implemented')
 
         return self.basis_mat(app_points.T)
 
-    def compute_fft(self, features, xyz_sampled, interp=True):
-        if interp:
-            # Nx: num of samples
-            breakpoint() # why interp?
-            fx, fy, fz = self.compute_spatial_volume(features)
-            volume = fx+fy+fz
-            points = F.grid_sample(volume, xyz_sampled[None, None, None].flip(-1), align_corners=True).view(-1, *xyz_sampled.shape[:1],)
-        else:
-            # this is fast because we did 2d transform and matrix multiplication . (N*N) logN d + Nsamples * d*d + 3 * Nsamples 
-            Fx, Fy, Fz = features
-            d1, d2, d3 = Fx.shape[2], Fy.shape[3], Fz.shape[4]
-            Nx, Ny, Nz = Fy.shape[2], Fz.shape[3], Fx.shape[4]
-            kx, ky, kz = self.axis
-            kx, ky, kz = kx[:d1], ky[:d2], kz[:d3]
-            xs, ys, zs = xyz_sampled.chunk(3, dim=-1)
+    def compute_fft(self, features, xyz_sampled, mask=None):
+        # this is fast because of 2d transform and matrix multiplication.
+        # (N*N) logN d + Nsamples * d*d + 3 * Nsamples
+        Fx, Fy, Fz = features
+        d1, d2, d3 = Fx.shape[2], Fy.shape[3], Fz.shape[4]
+        Nx, Ny, Nz = Fy.shape[2], Fz.shape[3], Fx.shape[4]
+        kx, ky, kz = self.axis
+        kx, ky, kz = kx[:d1], ky[:d2], kz[:d3]
+        xs, ys, zs = xyz_sampled.chunk(3, dim=-1)
 
-            Fx = idctn(Fx, axes=(3, 4))
-            Fy = idctn(Fy, axes=(2, 4))
-            Fz = idctn(Fz, axes=(2, 3))
+        '''
+        # [1, F, N, N, N]
+        pad_size = [(8 - x%8) % 8 for x in [Nx, Ny, Nz]]
 
-            fx = grid_sample(
-                Fx.transpose(3, 3).flatten(1,2),
-                torch.stack([zs, ys], dim=-1)[None]).reshape(Fx.shape[1], Fx.shape[2], -1)
-            fy = grid_sample(
-                Fy.transpose(2, 3).flatten(1,2),
-                torch.stack([zs, xs], dim=-1)[None]).reshape(Fy.shape[1], Fy.shape[3], -1)
-            fz = grid_sample(
-                Fz.transpose(2, 4).flatten(1,2),
-                torch.stack([xs, ys], dim=-1)[None]).reshape(Fz.shape[1], Fz.shape[4], -1)
+        Fx = F.pad(Fx, (0, pad_size[-1], 0, pad_size[-2]))
+        Fx = Fx.reshape(*Fx.shape[:-2], Fx.shape[-2]//8, 8,
+                        Fx.shape[-1]//8, 8)
+        Fx = idctn(Fx, axes=(-3, -1))
+        Fx = Fx.flatten(-2, -1).flatten(-3, -2)[..., :Ny, :Nz]
 
-            if d1 == 1:
-                # when d==1 do not need transform and split complex into two channel
-                fxx = fx.reshape(-1, xyz_sampled.shape[0])
-                fyy = fy.reshape(-1, xyz_sampled.shape[0])
-                fzz = fz.reshape(-1, xyz_sampled.shape[0])
-            else:
-                fxx = batch_irfft(fx, xs, kx, Nx)
-                fyy = batch_irfft(fy, ys, ky, Ny)
-                fzz = batch_irfft(fz, zs, kz, Nz)
+        Fy = F.pad(Fy, (0, pad_size[-1], 0, 0, 0, pad_size[-3]))
+        Fy = Fy.reshape(*Fy.shape[:-3], Fy.shape[-3]//8, 8, Fy.shape[-2],
+                        Fy.shape[-1]//8, 8)
+        Fy = idctn(Fy, axes=(-4, -1))
+        Fy = Fy.flatten(-2, -1).flatten(-4, -3)[..., :Nx, :, :Nz]
 
-            return torch.cat([fxx, fyy, fzz], 0) # fxx+fyy+fzz
+        Fz = F.pad(Fz, (0, 0, 0, pad_size[-2], 0, pad_size[-3]))
+        Fz = Fz.reshape(*Fz.shape[:-3], Fz.shape[-3]//8, 8,
+                        Fz.shape[-2]//8, 8, Fz.shape[-1])
+        Fz = idctn(Fz, axes=(-4, -2))
+        Fz = Fz.flatten(-3, -2).flatten(-4, -3)[..., :Nx, :Ny, :]
 
-        return points
+        assert tuple(Fx.shape[-3:]) == (d1, Ny, Nz)
+        assert tuple(Fy.shape[-3:]) == (Nx, d2, Nz)
+        assert tuple(Fz.shape[-3:]) == (Nx, Ny, d3)
+        '''
+
+        if mask is not None:
+            mx, my, mz = mask
+            mx = torch.sigmoid(mx)
+            my = torch.sigmoid(my)
+            mz = torch.sigmoid(mz)
+            Fx = (Fx * (mx >= 0.5) - Fx * mx).detach() + Fx * mx
+            Fy = (Fy * (my >= 0.5) - Fy * my).detach() + Fy * my
+            Fz = (Fz * (mz >= 0.5) - Fz * mz).detach() + Fz * mz
+            '''
+            # Fx = Fx * (((mx >= 0.5).float() - mx).detach() + mx)
+            # Fy = Fy * (((my >= 0.5).float() - my).detach() + my)
+            # Fz = Fz * (((mz >= 0.5).float() - mz).detach() + mz)
+            Fx = (Fx * (mx >= 0.5) - Fx - Fx * mx).detach() \
+               + Fx + Fx.detach() * mx
+            Fy = (Fy * (my >= 0.5) - Fy - Fy * my).detach() \
+               + Fy + Fy.detach() * my
+            Fz = (Fz * (mz >= 0.5) - Fz - Fz * mz).detach() \
+               + Fz + Fz.detach() * mz
+            '''
+
+        Fx = idctn(Fx, axes=(3, 4))
+        Fy = idctn(Fy, axes=(2, 4))
+        Fz = idctn(Fz, axes=(2, 3))
+
+        fx = grid_sample(
+            Fx.transpose(3, 3).flatten(1,2),
+            torch.stack([zs, ys], dim=-1)[None]).reshape(Fx.shape[1], Fx.shape[2], -1)
+        fy = grid_sample(
+            Fy.transpose(2, 3).flatten(1,2),
+            torch.stack([zs, xs], dim=-1)[None]).reshape(Fy.shape[1], Fy.shape[3], -1)
+        fz = grid_sample(
+            Fz.transpose(2, 4).flatten(1,2),
+            torch.stack([xs, ys], dim=-1)[None]).reshape(Fz.shape[1], Fz.shape[4], -1)
+
+        fx = fx.reshape(-1, xyz_sampled.shape[0])
+        fy = fy.reshape(-1, xyz_sampled.shape[0])
+        fz = fz.reshape(-1, xyz_sampled.shape[0])
+
+        return torch.cat([fx, fy, fz], 0) # fxx+fyy+fzz
 
     def Parseval_Loss(self):
-        # Parseval Loss i.e., suppressing higher frequencies
-        # avoid higher freqeuncies explaining everything
-        new_feat = [
-            Fk.unsqueeze(-1) * torch.pi * wk.reshape(1, 1, *Fk.shape[2:], -1) 
-            for Fk, wk in zip(self.density, self.ktraj_den)]
-        loss = sum([feat.abs().square().mean() for feat in new_feat])
+        loss = 0
+        for f, w in zip(self.density, self.ktraj_den):
+            feat = torch.pi * f[..., None] * w.reshape(1, 1, *f.shape[2:], -1)
+            loss = loss + feat.square().mean()
+
+        # for f, w in zip(self.appearance, self.ktraj):
+        #     feat = torch.pi * f[..., None] * w.reshape(1, 1, *f.shape[2:], -1)
+        #     loss += feat.square().mean()
         return loss
 
     def compute_normal(self, xyz_sampled):
@@ -195,12 +233,18 @@ class CPhasoMLP(PhasorBase):
         res_app = [math.ceil(n * self.app_scale) for n in res_target]
 
         new_den = self.upsample_feats(self.den, res_den)
-        self.den = torch.nn.ParameterList([torch.nn.Parameter(den)
-                                           for den in new_den])
+        self.den = nn.ParameterList([nn.Parameter(den) for den in new_den])
 
         new_app = self.upsample_feats(self.app, res_app)
-        self.app = torch.nn.ParameterList([torch.nn.Parameter(app)
-                                           for app in new_app])
+        self.app = nn.ParameterList([nn.Parameter(app) for app in new_app])
+
+        # mask
+        new_den_mask = self.upsample_feats(self.den_mask, res_den)
+        self.den_mask = nn.ParameterList([nn.Parameter(den_mask)
+                                          for den_mask in new_den_mask])
+        new_app_mask = self.upsample_feats(self.app_mask, res_app)
+        self.app_mask = nn.ParameterList([nn.Parameter(app_mask)
+                                          for app_mask in new_app_mask])
 
         self.print_size()
         self.update_stepSize(res_target)
@@ -208,13 +252,66 @@ class CPhasoMLP(PhasorBase):
 
     def upsample_feats(self, features, res_target, update_dd=False):
         Tx, Ty, Tz = res_target
-        Fkx, Fky, Fkz = features
-        d1, d2, d3 = Fkx.shape[2], Fky.shape[3], Fkz.shape[4]
-        Nx, Ny, Nz = Fky.shape[2], Fkz.shape[3], Fkx.shape[4]
+        Fx, Fy, Fz = features
+        d1, d2, d3 = Fx.shape[-3], Fy.shape[-2], Fz.shape[-1]
+        Nx, Ny, Nz = Fy.shape[-3], Fz.shape[-2], Fx.shape[-1]
 
-        return F.pad(Fkx, (0, Tz-Nz, 0, Ty-Ny, 0, 0)), \
-               F.pad(Fky, (0, Tz-Nz, 0, 0, 0, Tx-Nx)), \
-               F.pad(Fkz, (0, 0, 0, Ty-Ny, 0, Tx-Nx))
+        return F.pad(Fx, (0, Tz-Nz, 0, Ty-Ny, 0, 0)), \
+               F.pad(Fy, (0, Tz-Nz, 0, 0, 0, Tx-Nx)), \
+               F.pad(Fz, (0, 0, 0, Ty-Ny, 0, Tx-Nx))
+        '''
+
+        pad_size = [(8 - x%8) % 8 for x in [Nx, Ny, Nz]]
+
+        Fx = F.pad(Fx, (0, pad_size[-1], 0, pad_size[-2]))
+        Fx = Fx.reshape(*Fx.shape[:-2], Fx.shape[-2]//8, 8,
+                        Fx.shape[-1]//8, 8)
+        Fx = idctn(Fx, axes=(-3, -1))
+        Fx = Fx.flatten(-2, -1).flatten(-3, -2)[..., :Ny, :Nz]
+
+        Fy = F.pad(Fy, (0, pad_size[-1], 0, 0, 0, pad_size[-3]))
+        Fy = Fy.reshape(*Fy.shape[:-3], Fy.shape[-3]//8, 8, Fy.shape[-2],
+                        Fy.shape[-1]//8, 8)
+        Fy = idctn(Fy, axes=(-4, -1))
+        Fy = Fy.flatten(-2, -1).flatten(-4, -3)[..., :Nx, :, :Nz]
+
+        Fz = F.pad(Fz, (0, 0, 0, pad_size[-2], 0, pad_size[-3]))
+        Fz = Fz.reshape(*Fz.shape[:-3], Fz.shape[-3]//8, 8,
+                        Fz.shape[-2]//8, 8, Fz.shape[-1])
+        Fz = idctn(Fz, axes=(-4, -2))
+        Fz = Fz.flatten(-3, -2).flatten(-4, -3)[..., :Nx, :Ny, :]
+
+        # interpolate
+        Fx = F.interpolate(Fx, (d1, Ty, Tz), mode='trilinear',
+                           align_corners=True)
+        Fy = F.interpolate(Fy, (Tx, d2, Tz), mode='trilinear',
+                           align_corners=True)
+        Fz = F.interpolate(Fz, (Tx, Ty, d3), mode='trilinear',
+                           align_corners=True)
+
+        # dctn
+        pad_size = [(8 - x%8) % 8 for x in [Tx, Ty, Tz]]
+
+        Fx = F.pad(Fx, (0, pad_size[-1], 0, pad_size[-2]))
+        Fx = Fx.reshape(*Fx.shape[:-2], Fx.shape[-2]//8, 8,
+                        Fx.shape[-1]//8, 8)
+        Fx = dctn(Fx, axes=(-3, -1))
+        Fx = Fx.flatten(-2, -1).flatten(-3, -2)[..., :Ty, :Tz]
+
+        Fy = F.pad(Fy, (0, pad_size[-1], 0, 0, 0, pad_size[-3]))
+        Fy = Fy.reshape(*Fy.shape[:-3], Fy.shape[-3]//8, 8, Fy.shape[-2],
+                        Fy.shape[-1]//8, 8)
+        Fy = dctn(Fy, axes=(-4, -1))
+        Fy = Fy.flatten(-2, -1).flatten(-4, -3)[..., :Tx, :, :Tz]
+
+        Fz = F.pad(Fz, (0, 0, 0, pad_size[-2], 0, pad_size[-3]))
+        Fz = Fz.reshape(*Fz.shape[:-3], Fz.shape[-3]//8, 8,
+                        Fz.shape[-2]//8, 8, Fz.shape[-1])
+        Fz = dctn(Fz, axes=(-4, -2))
+        Fz = Fz.flatten(-3, -2).flatten(-4, -3)[..., :Tx, :Ty, :]
+
+        return Fx, Fy, Fz
+        '''
 
     def update_stepSize(self, gridSize):
         self.ktraj = self.compute_ktraj(self.axis, gridSize)
@@ -234,6 +331,8 @@ class CPhasoMLP(PhasorBase):
                             lr_init_network=0.001):
         grad_vars = [{'params': self.den, 'lr': lr_init_spatialxyz},
                      {'params': self.app, 'lr': lr_init_spatialxyz},
+                     {'params': self.den_mask, 'lr': lr_init_spatialxyz},
+                     {'params': self.app_mask, 'lr': lr_init_spatialxyz},
                      {'params': self.basis_mat.parameters(),
                       'lr':lr_init_network},
                      {'params': self.mlp.parameters(),
