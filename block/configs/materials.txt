@@ -1,5 +1,5 @@
 dataset_name = blender
-datadir = ../../data/nerf_synthetic/materials
+datadir = /path/to/nerf_synthetic/dataset
 expname =  test 
 basedir = ./cache/materials
 

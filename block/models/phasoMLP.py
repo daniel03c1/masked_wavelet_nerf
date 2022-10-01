@@ -16,7 +16,7 @@ import itertools
 from torch.utils.cpp_extension import load
 from cuda.grid import *
 
-g2l = load(name="g2l", sources=["/home/blee/nfs/DCT/BNeRF/cuda/global_to_local.cpp", "/home/blee/nfs/DCT/BNeRF/cuda/global_to_local.cu"])
+g2l = load(name="g2l", sources=["cuda/global_to_local.cpp", "cuda/global_to_local.cu"])
 
 
 class CPhasoMLP(PhasorBase):
@@ -206,6 +206,12 @@ class CPhasoMLP(PhasorBase):
         # (N*N) logN d + Nsamples * d*d + 3 * Nsamples
         # TODO
         Fx, Fy, Fz = features
+        # n_block, 8, 1, b_r, b_r  
+        '''
+        plogp 
+        min, max 는 fp로 가지고, (max - min) / 2^8    비슷한것 q vs 전체 q => 
+        
+        '''
         if mask is not None:
             mx, my, mz = mask
             mx = torch.sigmoid(mx)
@@ -245,6 +251,10 @@ class CPhasoMLP(PhasorBase):
         global_domain_min, global_domain_max = self.aabb
         points_flat = xyz_sampled.view(-1,3)
 
+        '''
+        256, 256 => 16 * 16 * 16
+        '''
+
         points_indices_3d = ((points_flat - global_domain_min) / self.voxel_size).long()
         normalize = True
         if normalize:
@@ -257,7 +267,6 @@ class CPhasoMLP(PhasorBase):
                 if idx_edge.shape[0] > 0:
                     points_indices_3d[idx_edge,i] = 0
                 del idx_edge
-                # 결국 clamp인데;;
 
         point_indices = (points_indices_3d * self.network_strides).sum(dim=1).long() 
         del points_indices_3d

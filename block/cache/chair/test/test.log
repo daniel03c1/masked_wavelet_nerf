@@ -1,0 +1,83 @@
+2022-10-01 11:12:27,560 - root - INFO - masking schedule: [2000, 4000, 6000, 8000, 10000, 15000, 2000, 4000, 6000, 8000, 10000, 15000],   [0.1, 0.2, 0.3, 0.4, 0.5, 0.51, 0.1, 0.2, 0.3, 0.4, 0.5, 0.51]
+2022-10-01 11:12:27,562 - root - INFO - block split: [9, 9, 13]
+2022-10-01 11:12:27,582 - root - INFO - resolution: [117, 117, 169]
+2022-10-01 11:12:27,583 - root - INFO - split per axis: [9, 9, 13],  #blocks: 1053,  #blk_res: [13, 13, 13]
+2022-10-01 11:12:27,696 - root - INFO - target parameter to 1281290
+2022-10-01 11:12:27,697 - root - INFO - mask lr: 3
+2022-10-01 11:12:27,701 - root - INFO - Namespace(N_vis=5, N_voxel_final=16777216, N_voxel_init=2097152, TV_step=1, TV_weight_app=0.0, TV_weight_density=3.0, TV_weight_density_reset=0.0005, TV_weight_mean_curvature=0, accumulate_decay=0.998, add_timestamp=0, alpha_init=0.01, alpha_lr=1.0, alpha_mask_thre=0.001, app_aug='flip', app_dim=36, app_ksize=16, app_num_comp=[1, 1, 1], app_scale=1.0, basedir='./cache/chair', batch_size=4096, block_split=[9, 9, 13], ckpt=None, compute_extra_metric=False, config='configs/chair.txt', datadir='../../../data/nerf_synthetic/chair', dataset_name='blender', den_ksize=8, den_num_comp=[1, 1, 1], den_scale=1.0, density_shift=-10, distance_scale=25, downsample_test=1.0, downsample_train=1.0, expname='test', export_mesh=0, fea2denseAct='softplus', fea_pe=2, featureC=128, idx_view=0, lindisp=False, lr_basis=0.001, lr_decay_iters=-1, lr_decay_target_ratio=0.1, lr_init=0.02, lr_upsample_reset=1, mask_iter=[2000, 4000, 6000, 8000, 10000, 15000, 2000, 4000, 6000, 8000, 10000, 15000], mask_lr=3, mask_thres_list=[0.1, 0.2, 0.3, 0.4, 0.5, 0.51, 0.1, 0.2, 0.3, 0.4, 0.5, 0.51], model_name='CPhasoMLP', nSamples=1000000, n_iters=30000, ndc_ray=0, perturb=1.0, pos_pe=6, progress_refresh_rate=10, render_only=0, render_path=0, render_test=1, render_train=0, rm_weight_mask_thre=0.001, scale_lr=1.0, shadingMode='MLP_Fea', softplus_beta=1.0, step_ratio=0.5, update_AlphaMask_list=[2000, 4000], update_dd=0, update_tv_list=None, upsamp_list=[2000, 3000, 4000, 5500, 7000], view_pe=2, vis_every=5000, white_bkgd=False, with_depth=False)
+2022-10-01 11:12:27,717 - root - INFO - mask threshold = 0, m_thres = tensor([-inf], device='cuda:0')
+2022-10-01 11:12:27,750 - root - INFO - split [117, 117, 169] with [9, 9, 13] blocks. Block res = [13, 13, 13] and freq is 8. net stride: 13.0
+2022-10-01 11:12:27,750 - root - INFO - lr decay  0.1  30000
+2022-10-01 11:12:28,810 - root - INFO - initial TV_weight density: 3.0  appearance: 0.0
+2022-10-01 11:12:28,811 - root - INFO - CPhasoMLP(
+  (den): ParameterList(
+      (0): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x8x1x13x13 (GPU 0)]
+      (1): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x8x13x1x13 (GPU 0)]
+      (2): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x8x13x13x1 (GPU 0)]
+  )
+  (app): ParameterList(
+      (0): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x16x1x13x13 (GPU 0)]
+      (1): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x16x13x1x13 (GPU 0)]
+      (2): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x16x13x13x1 (GPU 0)]
+  )
+  (den_mask): ParameterList(
+      (0): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x8x1x13x13 (GPU 0)]
+      (1): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x8x13x1x13 (GPU 0)]
+      (2): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x8x13x13x1 (GPU 0)]
+  )
+  (app_mask): ParameterList(
+      (0): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x16x1x13x13 (GPU 0)]
+      (1): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x16x13x1x13 (GPU 0)]
+      (2): Parameter containing: [torch.cuda.FloatTensor of size 1053x1x16x13x13x1 (GPU 0)]
+  )
+  (basis_mat): Linear(in_features=96, out_features=36, bias=False)
+  (mlp): Sequential(
+    (0): Linear(in_features=24, out_features=64, bias=True)
+    (1): ReLU(inplace=True)
+    (2): Linear(in_features=64, out_features=1, bias=True)
+  )
+  (renderModule): MLPRender_Fea(
+    (mlp): Sequential(
+      (0): Linear(in_features=195, out_features=128, bias=True)
+      (1): ReLU(inplace=True)
+      (2): Linear(in_features=128, out_features=128, bias=True)
+      (3): ReLU(inplace=True)
+      (4): Linear(in_features=128, out_features=3, bias=True)
+    )
+  )
+)
+2022-10-01 11:12:28,834 - root - INFO -  ==> Actual Model Size 97.93441009521484 MB
+2022-10-01 11:12:28,867 - root - INFO - Model Size (alpha_params) : 0.0000 MB
+2022-10-01 11:12:28,867 - root - INFO - Model Size (beta) : 0.0000 MB
+2022-10-01 11:12:28,867 - root - INFO - Model Size (den.0) : 5.4308 MB
+2022-10-01 11:12:28,867 - root - INFO - Model Size (den.1) : 5.4308 MB
+2022-10-01 11:12:28,900 - root - INFO - Model Size (den.2) : 5.4308 MB
+2022-10-01 11:12:28,901 - root - INFO - Model Size (app.0) : 10.8616 MB
+2022-10-01 11:12:28,901 - root - INFO - Model Size (app.1) : 10.8616 MB
+2022-10-01 11:12:28,901 - root - INFO - Model Size (app.2) : 10.8616 MB
+2022-10-01 11:12:28,901 - root - INFO - Model Size (den_mask.0) : 5.4308 MB
+2022-10-01 11:12:28,935 - root - INFO - Model Size (den_mask.1) : 5.4308 MB
+2022-10-01 11:12:28,935 - root - INFO - Model Size (den_mask.2) : 5.4308 MB
+2022-10-01 11:12:28,935 - root - INFO - Model Size (app_mask.0) : 10.8616 MB
+2022-10-01 11:12:28,935 - root - INFO - Model Size (app_mask.1) : 10.8616 MB
+2022-10-01 11:12:28,935 - root - INFO - Model Size (app_mask.2) : 10.8616 MB
+2022-10-01 11:12:28,935 - root - INFO - Model Size (basis_mat.weight) : 0.0132 MB
+2022-10-01 11:12:28,968 - root - INFO - Model Size (mlp.0.weight) : 0.0059 MB
+2022-10-01 11:12:28,968 - root - INFO - Model Size (mlp.0.bias) : 0.0002 MB
+2022-10-01 11:12:28,968 - root - INFO - Model Size (mlp.2.weight) : 0.0002 MB
+2022-10-01 11:12:28,968 - root - INFO - Model Size (mlp.2.bias) : 0.0000 MB
+2022-10-01 11:12:29,010 - root - INFO - Model Size (renderModule.mlp.0.weight) : 0.0952 MB
+2022-10-01 11:12:29,010 - root - INFO - Model Size (renderModule.mlp.0.bias) : 0.0005 MB
+2022-10-01 11:12:29,010 - root - INFO - Model Size (renderModule.mlp.2.weight) : 0.0625 MB
+2022-10-01 11:12:29,010 - root - INFO - Model Size (renderModule.mlp.2.bias) : 0.0005 MB
+2022-10-01 11:12:29,044 - root - INFO - Model Size (renderModule.mlp.4.weight) : 0.0015 MB
+2022-10-01 11:12:29,044 - root - INFO - Model Size (renderModule.mlp.4.bias) : 0.0000 MB
+2022-10-01 11:12:30,468 - root - INFO - Iter 0: 11.030257301058937   tv_loss = 0.0000000000
+2022-10-01 11:12:30,469 - root - INFO - Total size: 49.0571MB
+2022-10-01 11:12:30,470 - root - INFO - reduced size: 49.0571MB
+2022-10-01 11:12:30,491 - root - INFO - 4270968 / 4270968 alive. 0.0% masked
+2022-10-01 11:12:42,184 - root - INFO - Iter 100: 11.11118603689061   tv_loss = 0.0000012681
+2022-10-01 11:12:54,777 - root - INFO - Iter 200: 14.588696823098804   tv_loss = 0.0056071584
+2022-10-01 11:13:09,918 - root - INFO - Iter 300: 16.071520354342937   tv_loss = 0.0046499847
+2022-10-01 11:13:24,841 - root - INFO - Iter 400: 16.315547119872043   tv_loss = 0.0042593870
+2022-10-01 11:13:39,255 - root - INFO - Iter 500: 18.679275444279607   tv_loss = 0.0037575995

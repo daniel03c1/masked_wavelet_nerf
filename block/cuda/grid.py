@@ -5,10 +5,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils.cpp_extension import load
-owow = load(name="asdd", sources=["/home/blee/nfs/DCT/BNeRF_v2/PREF_upsample/cuda/grid_2d.cpp", "/home/blee/nfs/DCT/BNeRF_v2/PREF_upsample/cuda/grid_2d_kernel.cu"])
+owow = load(name="asdd", sources=["./cuda/grid_2d.cpp", "./cuda/grid_2d_kernel.cu"])
 
 import pdb
-# 만약 block res중에서 같은 값이 있으면 연산이 그만큼 줄어드는데...
 class GridSample(torch.autograd.Function):
     @staticmethod
     def forward(ctx, block_x, block_y, block_z, block_coords, book, iter=0):  
