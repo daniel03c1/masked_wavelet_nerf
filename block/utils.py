@@ -5,6 +5,7 @@ import torchvision.transforms as T
 import torch.nn.functional as F
 import scipy.signal
 import pdb
+import itertools
 mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 
 # cv.COLORMAP_MAGMA
@@ -218,74 +219,140 @@ def convert_sdf_samples_to_ply(
     print("saving mesh to %s" % (ply_filename_out))
     ply_data.write(ply_filename_out)
 
+def min_max_quantize(inputs, bits=8):
+    if bits == 32:
+        return inputs
 
-def zigzag(input):  # input = B, b_r, b_r, C
-            #initializing the variables
-            #----------------------------------
-            h = 0
-            v = 0
+    # rounding
+    min_value = torch.amin(inputs)
+    max_value = torch.amax(inputs)
+    scale = (max_value - min_value).clamp(min=1e-8) / (2 ** bits - 1)
 
-            vmin = 0
-            hmin = 0
-
-            vmax = input.shape[1]
-            hmax = input.shape[2]
-            B = input.shape[0]
-            C = input.shape[3]
-            i = 0
-
-            output = np.zeros((B, vmax * hmax, C))  
-            #----------------------------------
-            while ((v < vmax) and (h < hmax)):
-                if ((h + v) % 2) == 0:                 # going up
-                    if (v == vmin):
-                        output[:, i, :] = input[:, v, h, :]        # if we got to the first line
-                        if (h == hmax):
-                            v = v + 1
-                        else:
-                            h = h + 1                        
-
-                        i = i + 1
-                    elif ((h == hmax -1 ) and (v < vmax)):   # if we got to the last column
-                        #print(2)
-                        output[:, i, :] = input[:, v, h, :] 
-                        v = v + 1
-                        i = i + 1
-
-                    elif ((v > vmin) and (h < hmax -1 )):    # all other cases
-                        #print(3)
-                        output[:, i, :] = input[:, v, h, :] 
-                        v = v - 1
-                        h = h + 1
-                        i = i + 1
-                else:                                    # going down
-                    if ((v == vmax -1) and (h <= hmax -1)):       # if we got to the last line
-                        #print(4)
-                        output[:, i, :] = input[:, v, h, :] 
-                        h = h + 1
-                        i = i + 1
-                    elif (h == hmin):                  # if we got to the first column
-                        #print(5)
-                        output[:, i, :] = input[:, v, h, :] 
-
-                        if (v == vmax -1):
-                            h = h + 1
-                        else:
-                            v = v + 1
-                        i = i + 1
-                    elif ((v < vmax -1) and (h > hmin)):     # all other cases
-                        #print(6)
-                        output[:, i, :] = input[:, v, h, :] 
-                        v = v + 1
-                        h = h - 1
-                        i = i + 1
-                if ((v == vmax-1) and (h == hmax-1)):          # bottom right element
-                    #print(7)        	
-                    output[:, i, :] = input[:, v, h, :] 
-                    break
-
-            #print ('v:',v,', h:',h,', i:',i)
-            return output
+    rounded = torch.round((inputs - min_value) / scale).to(torch.uint8)
+    return rounded, scale, min_value
 
 
+def min_max_dequantize(inputs, scale, min_value):
+    dequantized = inputs * scale + min_value
+    return dequantized
+
+def qat(inputs, bits=8):
+    if bits == 32:
+        return inputs
+
+    # rounding
+    min_value = torch.amin(inputs)
+    max_value = torch.amax(inputs)
+    scale = (max_value - min_value).clamp(min=1e-8) / (bits ** 2 - 1)
+
+    rounded = torch.round((inputs - min_value) / scale) * scale + min_value
+
+    return (rounded - inputs).detach() + inputs
+
+def zigzag(input):
+    h = 0
+    v = 0
+    vmin = 0
+    hmin = 0
+    vmax = input.shape[1]
+    hmax = input.shape[2]
+    B = input.shape[0]
+    C = input.shape[3]
+    i = 0
+    output = np.zeros((B, vmax * hmax, C), dtype=int)
+    up = 1 if hmax % 2 else 0
+
+    while ((v < vmax) and (h < hmax)):
+        if ((h + v) % 2) == up:                 
+            if (v == vmin):
+                output[:, i, :] = input[:, v, h, :]         
+                if (h == hmax): 
+                    v = v + 1   
+                else:
+                    h = h + 1   
+                i = i + 1
+            elif ((h == hmax -1 ) and (v < vmax)):   
+                output[:, i, :] = input[:, v, h, :]  
+                v = v + 1
+                i = i + 1
+            elif ((v > vmin) and (h < hmax -1 )):    
+                output[:, i, :] = input[:, v, h, :]  
+                v = v - 1
+                h = h + 1
+                i = i + 1
+        else:                                    
+            if ((v == vmax -1) and (h <= hmax -1)):       
+                output[:, i, :] = input[:, v, h, :]  
+                h = h + 1
+                i = i + 1
+            elif (h == hmin):                  
+                output[:, i, :] = input[:, v, h, :]  
+                if (v == vmax -1):
+                    h = h + 1   
+                else:
+                    v = v + 1   
+                i = i + 1
+            elif ((v < vmax -1) and (h > hmin)):     
+                output[:, i, :] = input[:, v, h, :]  
+                v = v + 1
+                h = h - 1
+                i = i + 1
+        if ((v == vmax-1) and (h == hmax-1)):          
+            output[:, i, :] = input[:, v, h, :]  
+            break
+    return output
+
+
+
+def inverse_zigzag(input, B, vmax, hmax, C):
+    h = 0
+    v = 0
+    vmin = 0
+    hmin = 0
+    output = np.zeros((B, vmax, hmax, C), dtype=int)
+    i = 0
+    up = 1 if hmax % 2 else 0
+    while ((v < vmax) and (h < hmax)): 
+        if ((h + v) % 2) == up:                 
+            if (v == vmin):
+                output[:, v, h, :] = input[:, i, :]        
+                if (h == hmax):
+                    v = v + 1
+                else:
+                    h = h + 1                        
+                i = i + 1
+            elif ((h == hmax -1 ) and (v < vmax)):   
+                output[:, v, h, :] = input[:, i, :]
+                v = v + 1
+                i = i + 1
+
+            elif ((v > vmin) and (h < hmax -1 )):    
+                output[:, v, h, :] = input[:, i, :] 
+                v = v - 1
+                h = h + 1
+                i = i + 1
+
+        else:                                    
+            if ((v == vmax -1) and (h <= hmax -1)):       
+                output[:, v, h, :] = input[:, i, :] 
+                h = h + 1
+                i = i + 1
         
+            elif (h == hmin):                  
+                output[:, v, h, :] = input[:, i, :] 
+                if (v == vmax -1):
+                    h = h + 1
+                else:
+                    v = v + 1
+                i = i + 1
+                                
+            elif((v < vmax -1) and (h > hmin)):     
+                output[:, v, h, :] = input[:, i, :] 
+                v = v + 1
+                h = h - 1
+                i = i + 1
+
+        if ((v == vmax-1) and (h == hmax-1)):          
+            output[:, v, h, :] = input[:, i, :] 
+            break
+    return output

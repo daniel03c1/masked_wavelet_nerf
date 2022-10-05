@@ -7,6 +7,9 @@ basedir = ./cache/hotdogs
 mask_lr = 3
 block_split = [9, 16, 24]   # Only first element is used 
 
+target_block = 1000
+entropy_weight = -1
+
 mask_iter = [2000, 4000, 6000, 8000, 10000, 15000]           
 mask_thres_list = [0.1, 0.2, 0.3, 0.4, 0.5, 0.51]
 

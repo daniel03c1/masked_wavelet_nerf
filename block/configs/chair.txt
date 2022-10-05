@@ -1,16 +1,18 @@
 dataset_name = blender
-datadir = /path/to/nerf_synthetic/dataset  # ../../../data/nerf_synthetic/chair
+datadir = #/path/to/nerf_synthetic/dataset  # ../../../data/nerf_synthetic/chair
 expname =  test 
 basedir = ./cache/chair
 
 
 mask_lr = 3
 block_split = [9, 16, 24]   # Only first element is used 
+target_block = 1000
+entropy_weight = -1
 
 mask_iter = [2000, 4000, 6000, 8000, 10000, 15000]           
 mask_thres_list = [0.1, 0.2, 0.3, 0.4, 0.5, 0.51]
 
-n_iters = 30000
+n_iters = 3000
 batch_size = 4096
 N_voxel_init = 2097152 # 128**3
 N_voxel_final = 16777216 # 256**3 

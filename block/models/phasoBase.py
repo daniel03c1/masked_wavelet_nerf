@@ -25,7 +25,7 @@ class PhasorBase(torch.nn.Module):
                     density_shift = -10, alphaMask_thres=0.0001, 
                     distance_scale=25, rayMarch_weight_thres=0.0001,
                     pos_pe = 6, view_pe = 6, fea_pe = 6, featureC=128, step_ratio=2.0,
-                    fea2denseAct = 'softplus', block_split=16, logger=None, mask_lr=1):
+                    fea2denseAct = 'softplus', block_split=16, logger=None, mask_lr=1, mask=False):
         super(PhasorBase, self).__init__()
 
         self.den_num_comp = den_num_comp
@@ -68,8 +68,8 @@ class PhasorBase(torch.nn.Module):
         self.axis = [torch.arange(d, dtype=torch.float32, device=self.device)
                      for d in self.den_num_comp]
         self.block_split = block_split
-        self.init_phasor_volume(gridSize, device, block_split, logger, mask_lr)
-        self.update_stepSize(gridSize)  # 원래는 얘가 먼저 호출되고 init_phasor하니까 update-st에서 ktraj안구해줘도 됨. 어차피 덮어씌워졌음
+        self.init_phasor_volume(gridSize, device, block_split, logger, mask_lr, mask)
+        self.update_stepSize(gridSize)  
 
         self.shadingMode, self.pos_pe, self.view_pe, self.fea_pe, self.featureC = shadingMode, pos_pe, view_pe, fea_pe, featureC
         self.init_render_func(shadingMode, pos_pe, view_pe, fea_pe, featureC, device)
@@ -77,7 +77,7 @@ class PhasorBase(torch.nn.Module):
     def init_render_func(self, shadingMode, pos_pe, view_pe, fea_pe, featureC, device):
         if shadingMode == 'MLP_PE':
             self.renderModule = MLPRender_PE(self.app_dim, view_pe, pos_pe, featureC).to(device)
-        elif shadingMode == 'MLP_Fea':  # Here
+        elif shadingMode == 'MLP_Fea':  
             self.renderModule = MLPRender_Fea(self.app_dim, view_pe, fea_pe, featureC).to(device)
         elif shadingMode == 'MLP':
             self.renderModule = MLPRender(self.app_dim, view_pe, featureC).to(device)
@@ -167,7 +167,7 @@ class PhasorBase(torch.nn.Module):
         ckpt.update({'mask_thres': self.mask_thres})
         torch.save(ckpt, path)
 
-    def load(self, ckpt):   # issue 여기서 에러
+    def load(self, ckpt):  
         if 'alphaMask.aabb' in ckpt.keys():
             length = np.prod(ckpt['alphaMask.shape'])
             alpha_volume = torch.from_numpy(np.unpackbits(ckpt['alphaMask.mask'])[:length].reshape(ckpt['alphaMask.shape']))
@@ -185,8 +185,6 @@ class PhasorBase(torch.nn.Module):
             interpx += torch.rand_like(interpx) * ((far - near) / N_samples)
 
         rays_pts = rays_o[..., None, :] + rays_d[..., None, :] * interpx[..., None]
-        print(self.aabb)
-        raise NotImplementedError
         mask_outbbox = ((self.aabb[0] > rays_pts) | (rays_pts > self.aabb[1])).any(dim=-1)
         return rays_pts, interpx, ~mask_outbbox
 
@@ -225,12 +223,11 @@ class PhasorBase(torch.nn.Module):
             torch.linspace(0, 1, gridSize[0], device=self.device),
             torch.linspace(0, 1, gridSize[1], device=self.device),
             torch.linspace(0, 1, gridSize[2], device=self.device),
-        ), -1)  # r,r,r,3
-        dense_xyz = self.aabb[0] * (1-samples) + self.aabb[1] * samples # bbox내에서 dense하게 만듦.
-        # 여기까진 max가 잘 나옴
+        ), -1)  
+        dense_xyz = self.aabb[0] * (1-samples) + self.aabb[1] * samples 
         
         alpha = torch.zeros_like(dense_xyz[...,0])
-        for i in range(gridSize[0]):   # 이걸 왜 나눠서 해야되지
+        for i in range(gridSize[0]):   
             alpha[i] = self.compute_alpha(dense_xyz[i].view(-1,3), self.stepSize * self.distance_scale).view((gridSize[1], gridSize[2]))
         return alpha, dense_xyz
 
@@ -243,14 +240,12 @@ class PhasorBase(torch.nn.Module):
 
         ks = 3
 
-        block = True  # 결국 여기가 핵심..
+        block = True  
         if block:
-            X,Y,Z = alpha.shape[-3:] # 1 1 112 112 176
-
+            X,Y,Z = alpha.shape[-3:]
             new_alpha = torch.zeros((X,Y,Z)).to(alpha)
-
             bs_x, bs_y, bs_z = self.block_split
-            X = int(X/bs_x); Y = int(Y/bs_y); Z = int(Z/bs_z) # 7 7 11
+            X = int(X/bs_x); Y = int(Y/bs_y); Z = int(Z/bs_z) 
 
             for x in range(bs_x):
                 for y in range(bs_y):
@@ -264,13 +259,10 @@ class PhasorBase(torch.nn.Module):
         else :
             alpha2 = F.max_pool3d(alpha2, kernel_size=ks, padding=ks // 2, stride=1).view(gridSize)
         
-        # import pdb; pdb.set_trace()
-
-        alpha[alpha>=self.alphaMask_thres] = 1  # 288,664 / 2,207,744. 즉 10프로만 남음. 이게 맞나?
+        alpha[alpha>=self.alphaMask_thres] = 1 
         alpha[alpha<self.alphaMask_thres] = 0
         self.alphaMask = AlphaGridMask(self.device, self.aabb, alpha, self.block_split, domain_min, domain_max)
         valid_xyz = dense_xyz[alpha>0.5]
-        # 어차피 new aabb안씀. 즉 여기서 핵심은 self.alphamask를 만드는 것인데..
 
         xyz_min = valid_xyz.amin(0)
         xyz_max = valid_xyz.amax(0)
@@ -293,22 +285,22 @@ class PhasorBase(torch.nn.Module):
             rays_chunk = all_rays[idx_chunk].to(self.device)
 
             rays_o, rays_d = rays_chunk[..., :3], rays_chunk[..., 3:6]
-            if bbox_only:   # 최초
+            if bbox_only:   
                 vec = torch.where(rays_d == 0, torch.full_like(rays_d, 1e-6), rays_d)
-                rate_a = (self.aabb[1] - rays_o) / vec  # 결국엔 (bbox_max - ray_o) / ray_d
+                rate_a = (self.aabb[1] - rays_o) / vec  
                 rate_b = (self.aabb[0] - rays_o) / vec
-                t_min = torch.minimum(rate_a, rate_b).amax(-1)#.clamp(min=near, max=far)
-                t_max = torch.maximum(rate_a, rate_b).amin(-1)#.clamp(min=near, max=far)
+                t_min = torch.minimum(rate_a, rate_b).amax(-1)
+                t_max = torch.maximum(rate_a, rate_b).amin(-1)
                 mask_inbbox = t_max > t_min
 
-            else:   # 여기서 alphaMask 사용됨. 4000th
+            else:   
                 xyz_sampled, _,_ = self.sample_ray(rays_o, rays_d, N_samples=N_samples, is_train=False)
                 mask_inbbox= (self.alphaMask.sample_alpha(xyz_sampled, i).view(xyz_sampled.shape[:-1]) > 0).any(-1)
 
             mask_filtered.append(mask_inbbox.cpu())
 
         mask_filtered = torch.cat(mask_filtered).view(all_rgbs.shape[:-1])
-        # import pdb; pdb.set_trace()
+        
 
         print(f'Ray filtering done! takes {time.time()-tt} s. ray mask ratio: {torch.sum(mask_filtered) / N}')
         return all_rays[mask_filtered], all_rgbs[mask_filtered]
@@ -323,8 +315,7 @@ class PhasorBase(torch.nn.Module):
 
     def compute_alpha(self, xyz_locs, length=1):
         if self.alphaMask is not None:
-            alphas = self.alphaMask.sample_alpha(xyz_locs)  # 여기서 왜 xyz를 flip해서 gridsample? 4000에폭에서 업데이트할때 여긴데..
-            # 아마 flip 때문에 여기서 누락되는 애들이 생겨서 그런듯;;; 그래서 alpha개수가 pts개수보다 적음
+            alphas = self.alphaMask.sample_alpha(xyz_locs)
             alpha_mask = alphas > 0
         else:
             alpha_mask = torch.ones_like(xyz_locs[:,0], dtype=bool)
@@ -333,11 +324,11 @@ class PhasorBase(torch.nn.Module):
         sigma = torch.zeros(xyz_locs.shape[:-1], device=xyz_locs.device)
 
         if alpha_mask.any():
-            # xyz_sampled = self.normalize_coord(xyz_locs[alpha_mask])
-            xyz_sampled = xyz_locs[alpha_mask]  # 이게 왜 에러냐고;;
+            
+            xyz_sampled = xyz_locs[alpha_mask]  
             sigma_feature = self.compute_densityfeature(xyz_sampled)
             validsigma = self.feature2density(sigma_feature)
-            sigma[alpha_mask] = validsigma  # 마스킹한 부분에만 넣음
+            sigma[alpha_mask] = validsigma  
         
         alpha = 1 - torch.exp(-sigma*length).view(xyz_locs.shape[:-1])
 
@@ -367,14 +358,12 @@ class PhasorBase(torch.nn.Module):
         #     ray_invalid[ray_valid] |= (~alpha_mask)
         #     ray_valid = ~ray_invalid
 
-        # 이 xyz_sampled을 블록에 잘 나눠주면 됨. 그리고 블록별로 진행하면 되고..
         sigma = torch.zeros(xyz_sampled.shape[:-1], device=xyz_sampled.device)
         rgb = torch.zeros((*xyz_sampled.shape[:2], 3), device=xyz_sampled.device)
 
-        if ray_valid.any(): # ray_valid + alphamasking. 근데 ray_valid는 bbox 검사한 앤데 왜 또 걸리지?
-        # 근데 알파마스킹까지 하니까 더 애매하네;
+        if ray_valid.any():
             # Filtering
-            # xyz_sampled = self.normalize_coord(xyz_sampled) # 이걸 왜할까?
+            # xyz_sampled = self.normalize_coord(xyz_sampled)
             normalize = False
             if normalize:
                 xyz_sampled = normalized_pts = (xyz_sampled - self.aabb[0]) / self.bbox_size * 2 - 1
@@ -388,20 +377,12 @@ class PhasorBase(torch.nn.Module):
         # app_mask = weight > 0
 
         if app_mask.any():
-            # print("app")
             app_features, points_backordered = self.compute_appfeature(xyz_sampled[app_mask], viewdirs[app_mask])
-            # 지금은 일단  
-            # 아래 포인트도 reorder해서 넣어줘야 하나? 글고 글로벌을 줘야하나 로컬을 줘야하나.. app_features는 로컬 기반으로 만들어진건데
-            # 일단은 global 받음
-            # valid_rgbs = self.renderModule(xyz_sampled[app_mask], , app_features) # app_mask하고나서 reorder 해줘야 하는데
-            valid_rgbs = self.renderModule(points_backordered, viewdirs[app_mask], app_features) # app_mask하고나서 reorder 해줘야 하는데
-            rgb[app_mask] = valid_rgbs  # l-val은 원래 인덱스고 r-val은 정렬된 인덱스
+            valid_rgbs = self.renderModule(points_backordered, viewdirs[app_mask], app_features)
+            rgb[app_mask] = valid_rgbs
 
-        # 원래는 weight가 4096, samples 이고 rgb가 4096, samples, 3 임.
-
-
-        acc_map = torch.sum(weight, -1) # weight는 reordered        should be 4096
-        rgb_map = torch.sum(weight[..., None] * rgb, -2)    # rgb도 reorder이라고 봐야하나
+        acc_map = torch.sum(weight, -1) 
+        rgb_map = torch.sum(weight[..., None] * rgb, -2)    
         
 
         if white_bg or (is_train and torch.rand((1,))<0.5):
@@ -427,4 +408,4 @@ class PhasorBase(torch.nn.Module):
             # assert (normal_map.amin(1) >= 0).all()
             return rgb_map, depth_map, normal_map
 
-        return rgb_map, depth_map   # 4096,3   4096
+        return rgb_map, depth_map   

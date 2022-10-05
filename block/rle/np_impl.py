@@ -108,7 +108,7 @@ def merge_brle_lengths(lengths):
   return maybe_pad_brle(out)
 
 
-def split_long_brle_lengths(lengths, dtype=np.float64):
+def split_long_brle_lengths(lengths, dtype=np.int64):
   """Split lengths that exceed max dtype value.
 
   Lengths `l` are converted into [max_val, 0] * l // max_val + [l % max_val]
@@ -120,7 +120,7 @@ def split_long_brle_lengths(lengths, dtype=np.float64):
   ```
   """
   lengths = np.asarray(lengths)
-  max_val = np.finfo(dtype).max
+  max_val = np.iinfo(dtype).max
   bad_length_mask = lengths > max_val
   if np.any(bad_length_mask):
     # there are some bad lenghs
@@ -138,7 +138,7 @@ def split_long_brle_lengths(lengths, dtype=np.float64):
     return lengths
 
 
-def dense_to_brle(dense_data, dtype=np.float64):
+def dense_to_brle(dense_data, dtype=np.int64):
   """
   Get the binary run length encoding of `dense_data`.
 
@@ -191,7 +191,7 @@ def rle_to_dense(rle_data):
   return np.repeat(values, counts)
 
 
-def dense_to_rle(dense_data, dtype=np.float64):
+def dense_to_rle(dense_data, dtype=np.int64):
   """Get run length encoding of the provided dense data."""
   n = len(dense_data)
   starts = np.r_[0, np.flatnonzero(dense_data[1:] != dense_data[:-1]) + 1]
@@ -202,7 +202,7 @@ def dense_to_rle(dense_data, dtype=np.float64):
   return out.flatten()
 
 
-def split_long_rle_lengths(values, lengths, dtype=np.float64):
+def split_long_rle_lengths(values, lengths, dtype=np.int64):
   """Split long lengths in the associated run length encoding.
 
   e.g.
@@ -219,7 +219,7 @@ def split_long_rle_lengths(values, lengths, dtype=np.float64):
     values, lengths associated with the appropriate splits. `lengths` will be
     of type `dtype`, while `values` will be the same as the value passed in.
   """
-  max_length = np.finfo(dtype).max
+  max_length = np.iinfo(dtype).max
   lengths = np.asarray(lengths)
   repeats = lengths // max_length
   if np.any(repeats):
@@ -252,13 +252,13 @@ def merge_rle_lengths(values, lengths):
   return ret_values, ret_lengths
 
 
-def brle_to_rle(brle, dtype=np.float64):
+def brle_to_rle(brle, dtype=np.int64):
   lengths = brle
   values = np.tile(_ft, len(brle) // 2)
   return rle_to_rle(np.stack((values, lengths), axis=1).flatten(), dtype=dtype)
 
 
-def brle_to_brle(brle, dtype=np.float64):
+def brle_to_brle(brle, dtype=np.int64):
   """Almost the identity function.
 
   Checks for possible merges and required splits.
@@ -266,7 +266,7 @@ def brle_to_brle(brle, dtype=np.float64):
   return split_long_brle_lengths(merge_brle_lengths(brle), dtype=dtype)
 
 
-def rle_to_rle(rle, dtype=np.float64):
+def rle_to_rle(rle, dtype=np.int64):
   """Almost the identity function.
 
   Checks for possible merges and required splits.

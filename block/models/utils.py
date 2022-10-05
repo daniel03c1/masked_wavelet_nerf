@@ -39,13 +39,12 @@ def RGBRender(xyz_sampled, viewdirs, features):
     return rgb
 
 class AlphaGridMask(torch.nn.Module):
-    def __init__(self, device, aabb, alpha_volume, block_split, domain_min, domain_max): # issue block_split 
+    def __init__(self, device, aabb, alpha_volume, block_split, domain_min, domain_max):
         super(AlphaGridMask, self).__init__()
         self.device = device
         self.aabb=aabb.to(self.device)
-        self.aabbSize = self.aabb[1] - self.aabb[0] # 기존 aabb
+        self.aabbSize = self.aabb[1] - self.aabb[0] 
         self.invgridSize = 1.0/self.aabbSize * 2
-        # self.alpha_volume = alpha_volume.view(1,1,*alpha_volume.shape[-3:])
         self.gridSize = torch.LongTensor([alpha_volume.shape[-3],alpha_volume.shape[-2],alpha_volume.shape[-1]]).to(self.device)
         self.block_split = block_split
 
@@ -60,19 +59,14 @@ class AlphaGridMask(torch.nn.Module):
     def sample_alpha(self, xyz_sampled, deb=0):
         var = True
         if var:
-            # init
             voxel_size = torch.Tensor([(self.aabb[1] - self.aabb[0])[i] / self.block_split[i] for i in range(len(self.block_split))]).to(self.device)
-            network_strides = torch.Tensor([self.block_split[2] * self.block_split[1], self.block_split[2], 1]).to(self.device) # 이게 맞지 않나?
+            network_strides = torch.Tensor([self.block_split[2] * self.block_split[1], self.block_split[2], 1]).to(self.device)
             n_block = self.block_split[0] * self.block_split[1] * self.block_split[2]
 
-            # flip!!!
             xyz_sampled = xyz_sampled.view(-1,3)
-            # xyz_sampled = xyz_sampled.flip(-1)
 
-            # global points to local points
-            # 여기서 넘어가는 애들을 억지로 넣어서 문제?
-            points_indices_3d = ((xyz_sampled - self.aabb[0]) / voxel_size).long() # 그냥 얘 기준으로 16넘으면 제끼는게 낫겟다
-            for i in range(3):  # x가 15일 때만 문제인건데 일단은 다 고쳐보자.
+            points_indices_3d = ((xyz_sampled - self.aabb[0]) / voxel_size).long() 
+            for i in range(3): 
                 idx_edge = (points_indices_3d[...,i] >= self.block_split[i]).nonzero().squeeze(-1)
                 if idx_edge.shape[0] > 0:
                     points_indices_3d[idx_edge,i] = self.block_split[i] - 1
@@ -81,7 +75,6 @@ class AlphaGridMask(torch.nn.Module):
                 if idx_edge.shape[0] > 0:
                     points_indices_3d[idx_edge,i] = 0
                 del idx_edge
-                # 결국 clamp;;
 
             filtered_point_indices = (points_indices_3d * network_strides).sum(dim=1).long()
 
@@ -133,19 +126,14 @@ class AlphaGridMask(torch.nn.Module):
             return alpha_vals
 
         else:
-            # init
             voxel_size = (self.aabb[1] - self.aabb[0]) / self.block_split
             network_strides = torch.Tensor([self.block_split**2, self.block_split, 1]).to(self.device)
             n_block = self.block_split**3
 
-            # flip!!!
             xyz_sampled = xyz_sampled.view(-1,3)
-            # xyz_sampled = xyz_sampled.flip(-1)
 
-            # global points to local points
-            # 여기서 넘어가는 애들을 억지로 넣어서 문제?
-            points_indices_3d = ((xyz_sampled - self.aabb[0]) / voxel_size).long() # 그냥 얘 기준으로 16넘으면 제끼는게 낫겟다
-            for i in range(3):  # x가 15일 때만 문제인건데 일단은 다 고쳐보자.
+            points_indices_3d = ((xyz_sampled - self.aabb[0]) / voxel_size).long()
+            for i in range(3): 
                 idx_edge = (points_indices_3d[...,i] >= self.block_split).nonzero().squeeze(-1)
                 if idx_edge.shape[0] > 0:
                     points_indices_3d[idx_edge,i] = self.block_split - 1
@@ -154,7 +142,6 @@ class AlphaGridMask(torch.nn.Module):
                 if idx_edge.shape[0] > 0:
                     points_indices_3d[idx_edge,i] = 0
                 del idx_edge
-                # 결국 clamp;;
 
             filtered_point_indices = (points_indices_3d * network_strides).sum(dim=1).long()
 

@@ -10,13 +10,15 @@ from dataLoader import dataset_dict
 from opt import config_parser
 from renderer import *
 from utils import *
+from collections import Counter
 from huffman import *
-
+from rle.np_impl import dense_to_rle, rle_length, rle_to_dense
 #test!!
 import imageio_ffmpeg
+import pdb
+import math
 
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 renderer = OctreeRender_trilinear_fast
@@ -32,7 +34,7 @@ class SimpleSampler:
     def nextids(self):
         self.curr += self.batch
         if self.curr + self.batch > self.total:
-            self.ids = torch.randperm(self.total).to("cuda")    # issue
+            self.ids = torch.randperm(self.total).to("cuda")   
             self.curr = 0
         return self.ids[self.curr:self.curr+self.batch]
 
@@ -49,81 +51,18 @@ def export_mesh(args):
     convert_sdf_samples_to_ply(alpha.cpu(), f'{args.ckpt[:-3]}.ply',
                                bbox=phasorf.aabb.cpu(), level=0.005)
 
-
 @torch.no_grad()
-def render_test(args):
-    # init dataset
-    dataset = dataset_dict[args.dataset_name]
-    test_dataset = dataset(args.datadir, split='test',
-                           downsample=args.downsample_train, is_stack=True)
-    white_bg = test_dataset.white_bg
-    ndc_ray = args.ndc_ray
+def save_seperate(args, phasorf):
+    """
+    Save model whose components of density and those of apperance grid are quantized seperately
+    (Total 6 grids are quantized and huffman coded respectively)
+    """
+    n_block, _, den_chan, _, res_y, res_z = phasorf.den[0].shape
+    app_chan = phasorf.app[0].shape[2]
+    res_x = phasorf.den[1].shape[3]
+    shape_info = torch.IntTensor([n_block, den_chan, app_chan, res_x, res_y, res_z])
 
-    if not os.path.exists(args.ckpt):
-        print('the ckpt path does not exists!!')
-        return
-
-    ckpt = torch.load(args.ckpt, map_location=device)
-    kwargs = ckpt['kwargs']
-    kwargs.update({'device': device})
-    phasorf = eval(args.model_name)(**kwargs)
-    phasorf.load(ckpt)
-
-    logfolder = os.path.dirname(args.ckpt)
-    if args.render_train:
-        os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
-        train_dataset = dataset(args.datadir, split='train',
-                                downsample=args.downsample_train, is_stack=True)
-        PSNRs_test = evaluation(train_dataset, phasorf, args, renderer,
-                                f'{logfolder}/imgs_train_all/', N_vis=-1,
-                                N_samples=-1, white_bg=white_bg,
-                                ndc_ray=ndc_ray,device=device)
-        print(f'======> {args.expname} train all psnr: {np.mean(PSNRs_test)} '
-              f'<========================')
-
-    if args.render_test:
-        os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
-        PSNRs_test = evaluation(test_dataset, phasorf, args, renderer,
-                                f'{logfolder}/{args.expname}/imgs_test_all/',
-                                N_vis=-1, N_samples=-1, white_bg=white_bg,
-                                ndc_ray=ndc_ray, device=device)
-        print(f'======> {args.expname} train all psnr: {np.mean(PSNRs_test)} '
-              f'<========================')
-
-    if args.render_path:
-        c2ws = test_dataset.render_path
-        os.makedirs(f'{logfolder}/{args.expname}/imgs_path_all', exist_ok=True)
-        PSNRs_test = evaluation_path(test_dataset, phasorf, c2ws, renderer,
-                                     f'{logfolder}/{args.expname}/imgs_path_all/',
-                                     N_vis=-1, N_samples=-1, white_bg=white_bg,
-                                     ndc_ray=ndc_ray,device=device)
-        print(f'======> {args.expname} train all psnr: {np.mean(PSNRs_test)} '
-              f'<========================')
-
-
-def rle_test(args):
-    import logging
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    logfolder = f'{args.basedir}/{args.expname}'    
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    file_handler = logging.FileHandler(f'{logfolder}/{args.expname}.log')
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-
-    ckpt = torch.load(args.ckpt, map_location=device)
-    kwargs = ckpt['kwargs']
-    kwargs.update({'device':device})
-    kwargs.update({'logger':logger})
-    phasorf = eval(args.model_name)(**kwargs)
-    phasorf.load(ckpt)
-
-    phasorf.mask_thres = 0.51
-    phasorf.mask_learning = False
-    phasorf.iter = None
-
-    phasorf.mask_thres = ckpt['mask_thres']
+    print(phasorf.mask_thres)
 
     mask_thres_tensor = torch.Tensor([phasorf.mask_thres]).to(device)
     if phasorf.mask_thres == 0.5:
@@ -131,8 +70,7 @@ def rle_test(args):
     else:
         m_thres = torch.log((1 - mask_thres_tensor) / mask_thres_tensor) * (-1)
 
-    from rle.np_impl import dense_to_rle, rle_length, rle_to_dense
-    
+    d = 0; a = 0; d_all = 0; a_all = 0
     for i in range(3):
         phasorf.den[i].requires_grad=False
         phasorf.app[i].requires_grad=False
@@ -142,69 +80,717 @@ def rle_test(args):
         masked = phasorf.app_mask[i] < m_thres
         phasorf.app[i][masked] = 0 
 
-    den_compressed = app_compressed = []
-    den_perm_compressed = app_perm_compressed = []
-    den_zig_compressed = app_zig_compressed = []
+        d += phasorf.den[i].count_nonzero().item()
+        a += phasorf.app[i].count_nonzero().item()
+        d_all += phasorf.den[i].numel()
+        a_all += phasorf.app[i].numel()
+    print("=====================================")
+    print("At the end of training")
+    print(f"den: {((d_all - d) / d_all) * 100:.2f}%, app: {((a_all - a) / a_all) * 100:.2f}% masked")
+    print(f"grid size without mask bitmap = {(d + a) * 4 / 1024 / 1024:.2f}MB")
+    print("=====================================")
+    
+    # Encoding
+    # 1. Quantization
+    '''
+    Quantization formular from https://gaussian37.github.io/dl-concept-quantization/    (symmetric, signed)
+    To use Daniel's quantization, please 
+    comment line 101 ~ 134,         and   line 688 ~ 689    and
+    uncomment line 138 ~ 142        and   line 692 ~ 693    (Ctrl + F Daniel)
+    '''
+    fp_min = torch.zeros((2,3), device=device)  # 0=den 1=app
+    fp_max = torch.zeros((2,3), device=device)
 
     for i in range(3):
-        den_zig = phasorf.den[i].squeeze().permute(0,2,3,1).cpu().detach().numpy() 
-        app_zig = phasorf.app[i].squeeze().permute(0,2,3,1).cpu().detach().numpy() 
-        
+        fp_min[0,i] = phasorf.den[i].flatten().min(0)[0]
+        fp_max[0,i] = phasorf.den[i].flatten().max(0)[0]
+        fp_min[1,i] = phasorf.app[i].flatten().min(0)[0]
+        fp_max[1,i] = phasorf.app[i].flatten().max(0)[0]
+    
+    asymmetric = False
+    if asymmetric:
+        quant_min = np.iinfo(np.int8).min
+        quant_max = np.iinfo(np.int8).max
+        print(quant_min, quant_max)
+        s = (fp_max - fp_min) / (quant_max - quant_min)
+        z = torch.round((fp_max * quant_min - fp_min * quant_max) / (fp_max - fp_min))
+    else:
+        quant_min = np.iinfo(np.int8).min + 1
+        quant_max = np.iinfo(np.int8).max 
+        s = (fp_max - fp_min) / (quant_max - quant_min)
+        z = torch.zeros_like(s)
+
+    den_quant = []
+    app_quant = []
+    print(quant_min, quant_max)
+
+    for i in range(3):
+        den = torch.round(phasorf.den[i] / s[0,i] + z[0,i]).clamp(min=quant_min, max=quant_max).to(torch.int8)
+        app = torch.round(phasorf.app[i] / s[1,i] + z[1,i]).clamp(min=quant_min, max=quant_max).to(torch.int8)
+        den_quant.append(den)
+        app_quant.append(app)
+
+    for i in range(3):
+        phasorf.den[i].data = den_quant[i]
+        phasorf.app[i].data = app_quant[i]
+    
+    ##### Daniel
+    # s = torch.zeros((2,3)).to(phasorf.den[0].device)
+    # z = torch.zeros_like(s)
+    # for i in range(3):
+    #     phasorf.den[i].data, s[0, i], z[0, i] = min_max_quantize(phasorf.den[i])
+    #     phasorf.app[i].data, s[1, i], z[1, i] = min_max_quantize(phasorf.app[i])
+    #####
+
+    # 2. RLE
+    den_perm_compressed = []; app_perm_compressed = []
+    for i in range(3):
+        '''
+        Not use zigzag. Works fairly well;;
+        To use zigzag scanning, please 
+        comment line 154 ~ 159,         and   line 667 ~ 673    and
+        uncomment line 162 ~ 169        and   line 676 ~ 684    (Ctrl + F zigzag_scan)
+        '''
+        den_perm = phasorf.den[i].squeeze().permute(0,2,3,1).flatten().cpu().detach().numpy() 
+        app_perm = phasorf.app[i].squeeze().permute(0,2,3,1).flatten().cpu().detach().numpy()  
+        rle_den_perm = dense_to_rle(den_perm)
+        rle_app_perm = dense_to_rle(app_perm)
+        den_perm_compressed.append(rle_den_perm)
+        app_perm_compressed.append(rle_app_perm)
+
+        ###### zigzag_scan
+        # den_zig = phasorf.den[i].squeeze().permute(0,2,3,1).cpu().detach().numpy() 
+        # app_zig = phasorf.app[i].squeeze().permute(0,2,3,1).cpu().detach().numpy() 
+        # den_zig = zigzag(den_zig).flatten()
+        # app_zig = zigzag(app_zig).flatten()
+        # rle_den_perm = dense_to_rle(den_zig)
+        # rle_app_perm = dense_to_rle(app_zig)
+        # den_perm_compressed.append(rle_den_perm)
+        # app_perm_compressed.append(rle_app_perm)
+        #######
+    
+    # 3. Entropy coding
+    enc_den = []; enc_app = []
+    node_den = []; node_app = []
+    huffman_tbl_den = []; huffman_tbl_app = []
+    for i in range(3):
+        freq_den = dict(Counter(den_perm_compressed[i]))
+        freq_den = sorted(freq_den.items(), key=lambda x: x[1], reverse=True)
+        _node_den = make_tree(freq_den)  
+        _huffman_tbl_den = huffman_code_tree(_node_den)   
+        huff_val_den = list(map(_huffman_tbl_den.get, den_perm_compressed[i]))  
+
+        huff_den = ''.join(map(str, huff_val_den))
+        enc_den.append(huff_den)
+        huffman_tbl_den.append(_huffman_tbl_den)
+        node_den.append(_node_den)
+
+        freq_app = dict(Counter(app_perm_compressed[i]))
+        freq_app = sorted(freq_app.items(), key=lambda x: x[1], reverse=True)
+        _node_app = make_tree(freq_app)  
+        _huffman_tbl_app = huffman_code_tree(_node_app)   
+        huff_val_app = list(map(_huffman_tbl_app.get, app_perm_compressed[i]))  
+        huff_app = ''.join(map(str, huff_val_app))
+        enc_app.append(huff_app)
+        huffman_tbl_app.append(_huffman_tbl_app)
+        node_app.append(_node_app)
+
+    # Store values
+    # 1. store grid as byte tensor and mlps
+    BIT = 8; grid_size = 0
+    enc_tensors = []
+    for enc in enc_den + enc_app:
+        _len = len(enc)
+        total_int = math.ceil(_len / BIT)
+
+        st = 0
+        print(_len, total_int)
+        out = []
+        idx_chunk = torch.split(torch.arange(_len), BIT)
+        for i in range(total_int):
+            target = enc[st: st+BIT]
+            _int = int(target, 2)
+            out.append(_int)
+            st += BIT
+        last_target_len = _len - BIT * (total_int - 1)
+        out.append(last_target_len)
+        bit2byte = torch.ByteTensor(out)
+        enc_tensors.append(bit2byte)
+        print(bit2byte.element_size() * bit2byte.numel() / 1024 / 1024, "byte")
+        grid_size += bit2byte.element_size() * bit2byte.numel() / 1024 / 1024
+
+    enc_tensors.append(shape_info)
+    print(f"Grid(+shape): {grid_size}MB")
+    
+    save_path = f'{args.basedir}/{args.expname}/model/'
+    os.makedirs(save_path, exist_ok=True)
+    # save args
+    kwargs = phasorf.get_kwargs()
+    kwargs.update({"scale": s})
+    kwargs.update({"zero": z})
+
+    model_params = {
+        "grid": enc_tensors,
+        "args": kwargs,
+        "net": {
+            "basis_mat": phasorf.basis_mat,
+            "mlp": phasorf.mlp,
+            "renderModule": phasorf.renderModule
+        },
+        "alpha_params": phasorf.alpha_params,
+        "beta": phasorf.beta
+
+    }
+    torch.save(model_params, save_path + 'model.pt')
+    
+    # 3. save nodes
+    import pickle
+    import gzip
+    with gzip.open(save_path + 'gzip_node_den.pickle', 'wb') as f:
+        pickle.dump(node_den, f)
+        del node_den
+    with gzip.open(save_path + 'gzip_node_app.pickle', 'wb') as f:
+        pickle.dump(node_app, f)
+        del node_app
+  
+
+@torch.no_grad()
+def save_all(args, phasorf):    
+    """
+    Quantize all components of density and appearance at once.
+    (Total 1 grid is quantized and huffman coded)
+    """
+    n_block, _, den_chan, _, res_y, res_z = phasorf.den[0].shape
+    app_chan = phasorf.app[0].shape[2]
+    res_x = phasorf.den[1].shape[3]
+    shape_info = torch.IntTensor([n_block, den_chan, app_chan, res_x, res_y, res_z])
+
+    print(phasorf.mask_thres)
+
+    mask_thres_tensor = torch.Tensor([phasorf.mask_thres]).to(device)
+    if phasorf.mask_thres == 0.5:
+        m_thres = 0
+    else:
+        m_thres = torch.log((1 - mask_thres_tensor) / mask_thres_tensor) * (-1)
+
+    d = 0; a = 0; d_all = 0; a_all = 0
+    for i in range(3):
+        phasorf.den[i].requires_grad=False
+        phasorf.app[i].requires_grad=False
+
+        masked = phasorf.den_mask[i] < m_thres
+        phasorf.den[i][masked] = 0 
+        masked = phasorf.app_mask[i] < m_thres
+        phasorf.app[i][masked] = 0 
+
+        d += phasorf.den[i].count_nonzero().item()
+        a += phasorf.app[i].count_nonzero().item()
+        d_all += phasorf.den[i].numel()
+        a_all += phasorf.app[i].numel()
+    print("=====================================")
+    print("At the end of training")
+    print(f"den: {((d_all - d) / d_all) * 100:.2f}%, app: {((a_all - a) / a_all) * 100:.2f}% masked")
+    print(f"grid size without mask bitmap = {(d + a) * 4 / 1024 / 1024:.2f}MB")
+    print("=====================================")
+    
+    # Encoding
+    # 1. Quantization
+    mins = torch.zeros((6), device=device)  # 0=den 1=app
+    maxs = torch.zeros((6), device=device)
+
+    for i in range(3):
+        mins[i] = phasorf.den[i].flatten().min(0)[0]
+        maxs[i] = phasorf.den[i].flatten().max(0)[0]
+        mins[i+3] = phasorf.app[i].flatten().min(0)[0]
+        maxs[i+3] = phasorf.app[i].flatten().max(0)[0]
+    
+    fp_min = torch.min(mins)
+    fp_max = torch.max(maxs)
+
+    print(fp_min, fp_max)
+    
+    asymmetric = False
+    if asymmetric:
+        quant_min = np.iinfo(np.int8).min
+        quant_max = np.iinfo(np.int8).max
+        print(quant_min, quant_max)
+        s = (fp_max - fp_min) / (quant_max - quant_min)
+        z = torch.round((fp_max * quant_min - fp_min * quant_max) / (fp_max - fp_min))
+    else:
+        quant_min = np.iinfo(np.int8).min + 1
+        quant_max = np.iinfo(np.int8).max 
+        s = (fp_max - fp_min) / (quant_max - quant_min)
+        z = torch.zeros_like(s)
+
+    den_quant = []
+    app_quant = []
+
+    for i in range(3):
+        den = torch.round(phasorf.den[i] / s + z).clamp(min=quant_min, max=quant_max).to(torch.int8)
+        app = torch.round(phasorf.app[i] / s + z).clamp(min=quant_min, max=quant_max).to(torch.int8)
+        den_quant.append(den)
+        app_quant.append(app)
+
+    for i in range(3):
+        phasorf.den[i].data = den_quant[i]
+        phasorf.app[i].data = app_quant[i]
+
+    # 2. RLE
+    den_perm_compressed = []; app_perm_compressed = []
+    for i in range(3):
         den_perm = phasorf.den[i].squeeze().permute(0,2,3,1).flatten().cpu().detach().numpy() 
         app_perm = phasorf.app[i].squeeze().permute(0,2,3,1).flatten().cpu().detach().numpy()  
         
-        den_zig = zigzag(den_zig).flatten()
-        app_zig = zigzag(app_zig).flatten()
-        
-        den = phasorf.den[i].flatten().cpu().detach().numpy()  
-        app = phasorf.app[i].flatten().cpu().detach().numpy()  
         rle_den_perm = dense_to_rle(den_perm)
         rle_app_perm = dense_to_rle(app_perm)
-        rle_den_zig = dense_to_rle(den_zig)
-        rle_app_zig = dense_to_rle(app_zig)
-        rle_den = dense_to_rle(den)
-        rle_app = dense_to_rle(app)
-
-        den_compressed.append(rle_den)
-        app_compressed.append(rle_app)
+        
         den_perm_compressed.append(rle_den_perm)
         app_perm_compressed.append(rle_app_perm)
-        den_zig_compressed.append(rle_den_zig)
-        app_zig_compressed.append(rle_app_zig)
     
-    uncomp = 0
-    comp = perm = zig = 0
+    # 3. Entropy coding
+    enc_den = []; enc_app = []
+    node_den = []; node_app = []
+    huffman_tbl_den = []; huffman_tbl_app = []
+
+    all_rles = den_perm_compressed[0]
+    for i in range(2):
+        all_rles = np.concatenate((all_rles, den_perm_compressed[i+1]))
     for i in range(3):
-        print(den_compressed[i].shape[0] / den_perm_compressed[i].shape[0], app_compressed[i].shape[0] / app_perm_compressed[i].shape[0])
-        uncomp = uncomp + phasorf.den[i].count_nonzero() + phasorf.app[i].count_nonzero()
-        comp = den_compressed[i].shape[0] + app_compressed[i].shape[0]
-        perm = den_perm_compressed[i].shape[0] + app_perm_compressed[i].shape[0]
-        zig = den_zig_compressed[i].shape[0] + app_zig_compressed[i].shape[0]
-
-    print(args.ckpt)
-    print(f'uncomp size: {uncomp*4/1_048_576:.4f}MB')
-    print(f'comp size: {comp*4/1_048_576:.4f}MB')
-    print(f'perm size: {perm*4/1_048_576:.4f}MB')
-    print(f'zig size: {zig*4/1_048_576:.4f}MB')
-
-    zig_size = zig*4/1_048_576
-    net_size = 0
-    net_size  += phasorf.basis_mat.weight.shape[0] * phasorf.basis_mat.weight.shape[1] * phasorf.basis_mat.weight.element_size() 
+        all_rles = np.concatenate((all_rles, app_perm_compressed[i]))
     
-    idx = [0,2]
+    freq = dict(Counter(all_rles))
+    freq = sorted(freq.items(), key=lambda x: x[1], reverse=True)
+    _node = make_tree(freq)  
+    _huffman_tbl = huffman_code_tree(_node)   
+    huff_val = list(map(_huffman_tbl.get, all_rles))  
+    huff = ''.join(map(str, huff_val)) 
+
+    # Store values
+    # 1. store grid as byte tensor and mlps
+    BIT = 8; grid_size = 0
+    enc_tensors = []
+    _len = len(huff)
+    total_int = math.ceil(_len / BIT)
+
+    st = 0
+    print(_len, total_int)
+    out = []
+    idx_chunk = torch.split(torch.arange(_len), BIT)
+    for i in range(total_int):
+        target = huff[st: st+BIT]
+        _int = int(target, 2)
+        out.append(_int)
+        st += BIT
+    last_target_len = _len - BIT * (total_int - 1)  # TODO DO not need to handle last 8 bits seperately
+    out.append(last_target_len)
+    bit2byte = torch.ByteTensor(out)
+
+    enc_tensors.append(bit2byte)
+    print(bit2byte.element_size() * bit2byte.numel() / 1024 / 1024, "byte")
+    grid_size += bit2byte.element_size() * bit2byte.numel() / 1024 / 1024
+
+    enc_tensors.append(shape_info)
+    print(f"Grid(+shape): {grid_size}MB")
     
-    for i in idx:
-        net_size  += phasorf.mlp[i].weight.shape[0] * phasorf.mlp[i].weight.shape[1] * phasorf.mlp[i].weight.element_size()
-        net_size  += phasorf.mlp[i].bias.shape[0] * phasorf.mlp[i].bias.element_size()
+    save_path = f'{args.basedir}/{args.expname}/model/'
+    os.makedirs(save_path, exist_ok=True)
+    # save args
+    kwargs = phasorf.get_kwargs()
+    kwargs.update({"scale": s})
+    kwargs.update({"zero": z})
+
+    # 2. save MLPs  
+    model_params = {
+        "grid": enc_tensors,
+        "args": kwargs,
+        "net": {
+            "basis_mat": phasorf.basis_mat,
+            "mlp": phasorf.mlp,
+            "renderModule": phasorf.renderModule
+        },
+        "alpha_params": phasorf.alpha_params,
+        "beta": phasorf.beta
+
+    }
+    torch.save(model_params, save_path + 'model.pt')
+    
+    # 3. save nodes and huffman tables
+    import pickle
+    import gzip
+    with gzip.open(save_path + 'gzip_node.pickle', 'wb') as f:
+        pickle.dump(_node, f)
+        del node_den
+
+@torch.no_grad()
+def save_half(args, phasorf):
+    """
+    Quantize density grid and appearance grid seperately.
+    In other words, 3 components of density grid are quantized and huffman coded together and other 3 components of 
+    appearance grid are quantized and huffman coded together.
+    (Total 2 grids are quantized and huffman coded respectively)
+    """
+
+    n_block, _, den_chan, _, res_y, res_z = phasorf.den[0].shape
+    app_chan = phasorf.app[0].shape[2]
+    res_x = phasorf.den[1].shape[3]
+    shape_info = torch.IntTensor([n_block, den_chan, app_chan, res_x, res_y, res_z])
+
+    mask_thres_tensor = torch.Tensor([phasorf.mask_thres]).to(device)
+    if phasorf.mask_thres == 0.5:
+        m_thres = 0
+    else:
+        m_thres = torch.log((1 - mask_thres_tensor) / mask_thres_tensor) * (-1)
+
+    d = 0; a = 0; d_all = 0; a_all = 0
+    for i in range(3):
+        phasorf.den[i].requires_grad=False
+        phasorf.app[i].requires_grad=False
+
+        masked = phasorf.den_mask[i] < m_thres
+        phasorf.den[i][masked] = 0 
+        masked = phasorf.app_mask[i] < m_thres
+        phasorf.app[i][masked] = 0 
+
+        d += phasorf.den[i].count_nonzero().item()
+        a += phasorf.app[i].count_nonzero().item()
+        d_all += phasorf.den[i].numel()
+        a_all += phasorf.app[i].numel()
+    print("=====================================")
+    print("At the end of training")
+    print(f"den: {((d_all - d) / d_all) * 100:.2f}%, app: {((a_all - a) / a_all) * 100:.2f}% masked")
+    print(f"grid size without mask bitmap = {(d + a) * 4 / 1024 / 1024:.2f}MB")
+    print("=====================================")
+    
+    # Encoding
+    # 1. Quantization
+    mins = torch.zeros((2,3), device=device)  # 0=den 1=app
+    maxs = torch.zeros((2,3), device=device)
+    fp_min = torch.zeros(2, device=device)  # 0 = den, 1 =app
+    fp_max = torch.zeros(2, device=device)
+
+    for i in range(3):
+        mins[0, i] = phasorf.den[i].flatten().min(0)[0]
+        maxs[0, i] = phasorf.den[i].flatten().max(0)[0]
+        mins[1, i] = phasorf.app[i].flatten().min(0)[0]
+        maxs[1, i] = phasorf.app[i].flatten().max(0)[0]
+    
+    fp_min[0] = torch.min(mins[0])
+    fp_max[0] = torch.max(maxs[0])
+    fp_min[1] = torch.min(mins[1])
+    fp_max[1] = torch.max(maxs[1])
+
+    asymmetric = False
+    if asymmetric:
+        quant_min = np.iinfo(np.int8).min
+        quant_max = np.iinfo(np.int8).max
+        print(quant_min, quant_max)
+        s = (fp_max - fp_min) / (quant_max - quant_min)
+        z = torch.round((fp_max * quant_min - fp_min * quant_max) / (fp_max - fp_min))
+    else:
+        quant_min = np.iinfo(np.int8).min + 1
+        quant_max = np.iinfo(np.int8).max 
+        s = (fp_max - fp_min) / (quant_max - quant_min)
+        z = torch.zeros_like(s)
+
+    den_quant = []
+    app_quant = []
+    print(quant_min, quant_max)
+
+    for i in range(3):
+        den = torch.round(phasorf.den[i] / s[0] + z[0]).clamp(min=quant_min, max=quant_max).to(torch.int8)
+        app = torch.round(phasorf.app[i] / s[1] + z[1]).clamp(min=quant_min, max=quant_max).to(torch.int8)
+        den_quant.append(den)
+        app_quant.append(app)
+
+    for i in range(3):
+        phasorf.den[i].data = den_quant[i]
+        phasorf.app[i].data = app_quant[i]
+
+    # 2. RLE
+    den_perm_compressed = []; app_perm_compressed = []
+    for i in range(3):
+        den_perm = phasorf.den[i].squeeze().permute(0,2,3,1).flatten().cpu().detach().numpy() 
+        app_perm = phasorf.app[i].squeeze().permute(0,2,3,1).flatten().cpu().detach().numpy()  
+        
+        rle_den_perm = dense_to_rle(den_perm)
+        rle_app_perm = dense_to_rle(app_perm)
+        
+        den_perm_compressed.append(rle_den_perm)
+        app_perm_compressed.append(rle_app_perm)
+    
+    # 3. Entropy coding
+    all_rles_den = den_perm_compressed[0]
+    all_rles_app = app_perm_compressed[0]
+
+    for i in range(2):
+        all_rles_den = np.concatenate((all_rles_den, den_perm_compressed[i+1]))
+        all_rles_app = np.concatenate((all_rles_app, app_perm_compressed[i+1]))
+
+        freq_den = dict(Counter(all_rles_den))
+        freq_den = sorted(freq_den.items(), key=lambda x: x[1], reverse=True)
+        _node_den = make_tree(freq_den)  
+        _huffman_tbl_den = huffman_code_tree(_node_den)   
+        huff_val_den = list(map(_huffman_tbl_den.get, all_rles_den))  
+        huff_den = ''.join(map(str, huff_val_den)) 
+
+        freq_app = dict(Counter(all_rles_app))
+        freq_app = sorted(freq_app.items(), key=lambda x: x[1], reverse=True)
+        _node_app = make_tree(freq_app)  
+        _huffman_tbl_app = huffman_code_tree(_node_app)   
+        huff_val_app = list(map(_huffman_tbl_app.get, all_rles_app))  
+        huff_app = ''.join(map(str, huff_val_app)) 
+
+    # Store values
+    # 1. store grid as byte tensor and mlps
+    BIT = 8; grid_size = 0
+    enc_tensors = []
+    for enc in [huff_den, huff_app]:
+        _len = len(enc)
+        total_int = math.ceil(_len / BIT)
+
+        st = 0
+        print(_len, total_int)
+        out = []
+        idx_chunk = torch.split(torch.arange(_len), BIT)
+        for i in range(total_int):
+            target = enc[st: st+BIT]
+            _int = int(target, 2)
+            out.append(_int)
+            st += BIT
+        last_target_len = _len - BIT * (total_int - 1)
+        out.append(last_target_len)
+        bit2byte = torch.ByteTensor(out)
+        enc_tensors.append(bit2byte)
+        print(bit2byte.element_size() * bit2byte.numel() / 1024 / 1024, "byte")
+        grid_size += bit2byte.element_size() * bit2byte.numel() / 1024 / 1024
+
+    enc_tensors.append(shape_info)
+    print(f"Grid(+shape): {grid_size}MB")
+    
+    save_path = f'{args.basedir}/{args.expname}/model/'
+    os.makedirs(save_path, exist_ok=True)
+    # save args
+    kwargs = phasorf.get_kwargs()
+    kwargs.update({"scale": s})
+    kwargs.update({"zero": z})
+
+    # 2. save MLPs  
+    model_params = {
+        "grid": enc_tensors,
+        "args": kwargs,
+        "net": {
+            "basis_mat": phasorf.basis_mat,
+            "mlp": phasorf.mlp,
+            "renderModule": phasorf.renderModule
+        },
+        "alpha_params": phasorf.alpha_params,
+        "beta": phasorf.beta
+
+    }
+    torch.save(model_params, save_path + 'model.pt')
+    
+    # 3. save nodes
+    import pickle
+    import gzip
+    with gzip.open(save_path + 'gzip_node_den.pickle', 'wb') as f:
+        pickle.dump(_node_den, f)
+    with gzip.open(save_path + 'gzip_node_app.pickle', 'wb') as f:
+        pickle.dump(_node_app, f)
+    
+  
+
+@torch.no_grad()
+def render_test(args, load_path=None): 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    import logging
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    logfolder = f'{args.basedir}/{args.expname}'    
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler = logging.FileHandler(f'{logfolder}/{args.expname}.log')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    if load_path == None:
+        load_path = f'{args.basedir}/{args.expname}/model/'
+    print(load_path)
+    model_params = torch.load(load_path + 'model.pt')
+    
+    kwargs = model_params["args"]
+
+    kwargs.update({'device': device})
+    kwargs.update({'logger': logger})
+    scale = kwargs["scale"]
+    zero = kwargs["zero"]
+    print(scale, zero)
+    print("=====")
+    del(kwargs["scale"])
+    del(kwargs["zero"])
+    phasorf = eval(args.model_name)(**kwargs)
 
 
-    idx = [0,2,4]
-    for i in idx:
-        net_size  += phasorf.renderModule.mlp[i].weight.shape[0] * phasorf.renderModule.mlp[i].weight.shape[1] * phasorf.renderModule.mlp[i].weight.element_size()
-        net_size  += phasorf.renderModule.mlp[i].bias.shape[0] * phasorf.renderModule.mlp[i].bias.element_size()
+    # 0. load values
+    _grid = model_params["grid"]
+    _basis_mat = model_params["net"]["basis_mat"]
+    _mlp = model_params["net"]["mlp"]
+    _renderModule = model_params["net"]["renderModule"]
+    _alpha_params = model_params["alpha_params"]
+    _beta = model_params["beta"]
+    import gzip
+    import pickle
+    n_blk, den_chan, app_chan, res_x, res_y, res_z = _grid[-1]
 
-    net_size = net_size / 1_048_576.0
-    print(f"{zig_size} + {net_size} = {zig_size + net_size} ")
+    den_shape = [[n_blk, res_y, res_z, den_chan], [n_blk, res_x, res_z, den_chan], [n_blk, res_x, res_y, den_chan]]
+    app_shape = [[n_blk, res_y, res_z, app_chan], [n_blk, res_x, res_z, app_chan], [n_blk, res_x, res_y, app_chan]]
+
+    mode = 'seperate'   # seperate, all, half
+    BIT = 8
+
+    if mode == 'seperate':
+        with gzip.open(load_path + 'gzip_node_den.pickle', 'rb') as f:
+            node_den = pickle.load(f)
+        with gzip.open(load_path + 'gzip_node_app.pickle', 'rb') as f:
+            node_app = pickle.load(f)
+        enc_den = _grid[:3]
+        enc_app = _grid[3:6]
+
+        for i in range(3):
+            # 0. byte to bit
+            enc_den_bit = byte2bit(enc_den[i])
+            enc_app_bit = byte2bit(enc_app[i])
+
+            # 1. DeHuffman
+            dec_den = decode(node_den[i], enc_den_bit) 
+            dec_app = decode(node_app[i], enc_app_bit) 
+
+            # 2. DeRLE & permute
+            dense_dec = rle_to_dense(dec_den)   
+            dense_dec = dense_dec.reshape(den_shape[i]).transpose(0, 3, 1, 2)  
+            decoded_den = torch.Tensor(dense_dec).to(device).unsqueeze(1).unsqueeze(i+3)
+
+            dense_dec = rle_to_dense(dec_app)
+            dense_dec = dense_dec.reshape(app_shape[i]).transpose(0, 3, 1, 2)
+            decoded_app = torch.Tensor(dense_dec).to(device).unsqueeze(1).unsqueeze(i+3)
+
+            ##### zigzag_scan
+            # dense_dec = rle_to_dense(dec_den).reshape(n_blk, den_shape[i][1] * den_shape[i][2], den_chan)   
+            # dense_dec = inverse_zigzag(dense_dec, *den_shape[i])
+            # dense_dec = dense_dec.transpose(0, 3, 1, 2)  # transpose
+            # decoded_den = torch.Tensor(dense_dec).to(device).unsqueeze(1).unsqueeze(i+3)
+
+            # dense_dec = rle_to_dense(dec_app).reshape(n_blk, app_shape[i][1] * app_shape[i][2], app_chan)
+            # dense_dec = inverse_zigzag(dense_dec, *app_shape[i])
+            # dense_dec = dense_dec.transpose(0, 3, 1, 2)
+            # decoded_app = torch.Tensor(dense_dec).to(device).unsqueeze(1).unsqueeze(i+3)
+            ######
+
+            # 3. Dequantization and restore grid weights
+            phasorf.den[i].data =scale[0, i] * (decoded_den - zero[0, i])
+            phasorf.app[i].data =scale[1, i] * (decoded_app - zero[1, i])
+
+            ##### Daniel
+            # phasorf.den[i].data = min_max_dequantize(decoded_den, scale[0, i], zero[0, i])
+            # phasorf.app[i].data = min_max_dequantize(decoded_app, scale[1, i], zero[1, i])
+            #####
+
+    elif mode == 'half':
+        with gzip.open(load_path + 'gzip_node_den.pickle', 'rb') as f:
+            node_den = pickle.load(f)
+        with gzip.open(load_path + 'gzip_node_app.pickle', 'rb') as f:
+            node_app = pickle.load(f)
+        enc_den = _grid[0]
+        enc_app = _grid[1]
+
+        # 0. byte to bit
+        enc_den_bit = byte2bit(enc_den)
+        enc_app_bit = byte2bit(enc_app)
+
+        # 1. DeHuffman
+        dec_den = decode(node_den, enc_den_bit) 
+        dec_app = decode(node_app, enc_app_bit) 
+
+        # 2. DeRLE & permute
+        dense_dec = rle_to_dense(dec_den)  
+        st = 0
+        for i in range(3):
+            N = np.prod(den_shape[i]).item()
+            den_dense_dec = dense_dec[st: st+ N]
+            den_dense_dec = den_dense_dec.reshape(den_shape[i]).transpose(0, 3, 1, 2)  # transpose
+            decoded_den = torch.Tensor(den_dense_dec).to(device).unsqueeze(1).unsqueeze(i+3)
+            # 3. Dequantization and restore grid weights
+            phasorf.den[i].data =scale[0] * (decoded_den - zero[1])
+            st += N 
+            # 3. Dequantization and restore grid weights
+        
+        dense_dec = rle_to_dense(dec_app)  
+        st = 0
+        for i in range(3):
+            N = np.prod(app_shape[i]).item()
+            den_dense_dec = dense_dec[st: st+ N]
+            den_dense_dec = den_dense_dec.reshape(app_shape[i]).transpose(0, 3, 1, 2)  # transpose
+            decoded_den = torch.Tensor(den_dense_dec).to(device).unsqueeze(1).unsqueeze(i+3)
+            # 3. Dequantization and restore grid weights
+            phasorf.app[i].data =scale[0] * (decoded_den - zero[1])
+            st += N 
+
+
+    elif mode == 'all':
+        with gzip.open(load_path + 'gzip_node.pickle', 'rb') as f:
+            node = pickle.load(f)
+        enc = _grid[0]
+        # 0. byte to bit
+        enc_bit = byte2bit(enc) 
+
+        # 1. DeHuffman
+        dec = decode(node, enc_bit) 
+
+        # 2. DeRLE & permute
+        dense_dec = rle_to_dense(dec)   
+
+        st = 0
+        for i in range(3):
+            N = np.prod(den_shape[i]).item()
+            den_dense_dec = dense_dec[st: st+ N]
+            den_dense_dec = den_dense_dec.reshape(den_shape[i]).transpose(0, 3, 1, 2)  # transpose
+            decoded_den = torch.Tensor(den_dense_dec).to(device).unsqueeze(1).unsqueeze(i+3)
+            # 3. Dequantization and restore grid weights
+            phasorf.den[i].data =scale * (decoded_den - zero)
+            st += N
+
+        for i in range(3):
+            N = np.prod(app_shape[i]).item()
+            den_dense_dec = dense_dec[st: st+ N]
+            den_dense_dec = den_dense_dec.reshape(app_shape[i]).transpose(0, 3, 1, 2)  # transpose
+            decoded_den = torch.Tensor(den_dense_dec).to(device).unsqueeze(1).unsqueeze(i+3)
+            # 3. Dequantization and restore grid weights
+            phasorf.app[i].data =scale * (decoded_den - zero)
+            st += N
+
+    else: 
+        raise NotImplementedError
+
+    # 4. restore other weights
+    phasorf.basis_mat = _basis_mat
+    phasorf.mlp = _mlp
+    phasorf.renderModule = _renderModule
+    phasorf.alpha_params = _alpha_params
+    phasorf.beta = _beta
+
+    # test
+    dataset = dataset_dict[args.dataset_name]
+    test_dataset = dataset(args.datadir, split='test',
+                           downsample=args.downsample_train, is_stack=True)
+    white_bg = test_dataset.white_bg
+    ndc_ray = args.ndc_ray
+    os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
+    PSNRs_test = evaluation(test_dataset, phasorf, args, renderer,
+                            f'{logfolder}/{args.expname}/imgs_test_all/',
+                            N_vis=-1, N_samples=-1, white_bg=white_bg,
+                            ndc_ray=ndc_ray, device=device)
+    print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} '
+        f'<========================')
+    logger.info(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} '
+        f'<========================')
 
 
 def reconstruction(args, return_bbox=False, return_memory=False,
@@ -252,7 +838,7 @@ def reconstruction(args, return_bbox=False, return_memory=False,
 
 
     # init parameters
-    if not bbox_only and args.dataset_name == 'blender':   
+    if not bbox_only and args.dataset_name == 'blender':
         # use tight bbox pre-extracted and stored in misc.py,
         # which takes 2k iters
         data = args.datadir.split('/')[-1]
@@ -270,39 +856,58 @@ def reconstruction(args, return_bbox=False, return_memory=False,
 
 
     adaptive_block = True 
-    mask_learning = False    
-    mask_schedule = True    
-
+    mask_learning = False
+    mask_schedule = True
+    entropy_weight = args.entropy_weight
+    entropy = torch.zeros(1) # for tqdm
 
     if mask_learning:
-        mask_thres = torch.ones(1).to(device)
-        mask_thres.requires_grad=True
+        mask_thres = 0.5
     else:
-        mask_thres = 0 # 0
+        mask_thres = 0
 
     if mask_schedule:
-        mask_iter = args.mask_iter          
+        mask_iter = args.mask_iter
         mask_thres_list = args.mask_thres_list
         assert len(mask_iter) == len(mask_thres_list)
         logger.info(f"masking schedule: {mask_iter},   {mask_thres_list}")
 
     if adaptive_block:
-        ratio = True
+        ratio = True 
         if ratio:
             bbox_size = aabb[1] - aabb[0]   
-            bbox_ind = torch.sort(bbox_size)[1] 
-            _blk_split = [args.block_split[0]]*3   
+            bbox_ind = torch.sort(bbox_size)[1]
+            target_block = args.target_block
+
+            _blk_split = [args.block_split[0]]*3
             print(_blk_split)
             smallest_bbox_size = bbox_size[bbox_ind[0]]
             print(bbox_size, smallest_bbox_size)
-            
+
+            tmp = 1
             for i in range(len(bbox_ind)):
+                tmp *= (bbox_size[bbox_ind[i]] / smallest_bbox_size)
+            
+            base_blk_split = math.ceil((target_block / tmp).pow(1/3))
+            _blk_split = [base_blk_split]*3
+            print(base_blk_split)
+            
+            for i in range(len(bbox_ind)):  # TODO refactorization required. (Fuse w/ above codes)
                 _blk_split[bbox_ind[i]] = int(_blk_split[bbox_ind[i]] * (bbox_size[bbox_ind[i]] / smallest_bbox_size))
 
             args.block_split = _blk_split
             print(args.block_split)
             logger.info(f"block split: {args.block_split}")
             
+        else:
+            bbox_size = aabb[1] - aabb[0]
+            blk_per_axis = args.block_split[0] + args.block_split[1] + args.block_split[2] 
+            max_block = args.block_split[0] * args.block_split[1] * args.block_split[2] 
+            total_size = bbox_size.sum().item()
+            x_split = int(blk_per_axis * bbox_size[0].item()  / total_size)
+            y_split = int(blk_per_axis * bbox_size[1].item()  / total_size)
+            z_split = int(max_block / x_split / y_split)
+            args.block_split = [x_split, y_split, z_split]
     
 
     if var_split:
@@ -321,6 +926,13 @@ def reconstruction(args, return_bbox=False, return_memory=False,
         kwargs.update({'logger':logger})
         phasorf = eval(args.model_name)(**kwargs)
         phasorf.load(ckpt)
+
+        phasorf.mask_thres = ckpt['mask_thres']
+        mask_thres_tensor = torch.Tensor([phasorf.mask_thres]).to(device)
+        if phasorf.mask_thres == 0.5:
+            m_thres = 0
+        else:
+            m_thres = torch.log((1 - mask_thres_tensor) / mask_thres_tensor) * (-1)
 
     else:
         phasorf = eval(args.model_name)(aabb, reso_cur, device,
@@ -349,7 +961,8 @@ def reconstruction(args, return_bbox=False, return_memory=False,
                     step_ratio=args.step_ratio, 
                     fea2denseAct=args.fea2denseAct,
                     block_split=args.block_split,
-                    logger=logger, mask_lr=args.mask_lr)
+                    logger=logger, mask_lr=args.mask_lr, mask=True)
+
         phasorf.mask_thres = mask_thres
         logger.info(args)
 
@@ -408,6 +1021,9 @@ def reconstruction(args, return_bbox=False, return_memory=False,
 
     phasorf.print_size()
 
+    
+
+
     for iteration in pbar:
         torch.cuda.empty_cache()
         phasorf.iter = iteration
@@ -424,8 +1040,19 @@ def reconstruction(args, return_bbox=False, return_memory=False,
         total_loss = loss
         
         if TV_weight_density > 0 and (iteration % args.TV_step == 0):
+            
+            # # 1. Parseval loss
             TV_weight_density *= lr_factor
             reg = phasorf.Parseval_Loss() * TV_weight_density
+
+            # 2. L1 loss
+            # L1_weight *= lr_factor
+            # reg = phasorf.L1_loss() * L1_weight
+
+            # # 3. L2 loss
+            # L2_weight *= lr_factor
+            # reg = phasorf.L2_loss() * L2_weight
+
 
             total_loss = total_loss + reg
             summary_writer.add_scalar('train/reg_tv_density',
@@ -437,12 +1064,21 @@ def reconstruction(args, return_bbox=False, return_memory=False,
             raise NotImplementedError('not implemented')
 
         if mask_learning:
-            mask_loss = ((phasorf.num_unmasked_den + phasorf.num_unmasked_app - phasorf.target_param) ** 2)**(0.5)
-            total_loss + mask_loss * 1e-9
+            mask_loss = ((phasorf.num_unmasked_den + phasorf.num_unmasked_app - phasorf.target_param) ** 2)**(0.5) * 1e-5
+            total_loss += mask_loss 
 
+        if entropy_weight > 0:
+            entropy = phasorf.Entropy_Loss() * entropy_weight
+            # entropy = phasorf.Compressibility_Loss() * entropy_weight
+            total_loss = total_loss + entropy
         optimizer.zero_grad()
         total_loss.backward()
         optimizer.step()
+
+        if mask_learning and iteration % 30 == 0:
+            print(f"mask learning: target # param: {phasorf.target_param}, cur unmasked param: {phasorf.num_unmasked_app + phasorf.num_unmasked_den}  cur mask thres: {phasorf.mask_thres}, mask loss:{mask_loss}, {phasorf.mask_thres.grad}, {phasorf.mask_thres.grad_fn}")
+            phasorf.logger.info(f"mask learning: target # param: {phasorf.target_param}, cur unmasked param: {phasorf.num_unmasked_app + phasorf.num_unmasked_den}  cur mask thres: {phasorf.mask_thres}, mask loss:{mask_loss}")
+
 
         loss = loss.detach().item()
 
@@ -460,7 +1096,7 @@ def reconstruction(args, return_bbox=False, return_memory=False,
                 f'Iteration {iteration:05d}:'
                 f' train_psnr = {float(np.mean(PSNRs)):.2f}'
                 f' test_psnr = {float(np.mean(PSNRs_test)):.2f}'
-                f' mse = {loss:.6f} tv_loss = {reg.detach().item():.10f}')
+                f' mse = {loss:.6f} tv_loss = {reg.detach().item():.10f} entropy={entropy.detach().item():.4f}' )
 
             if iteration % (args.progress_refresh_rate * 10) == 0:
                 logger.info(f"Iter {iteration}: {float(np.mean(PSNRs))}   tv_loss = {reg.detach().item():.10f}")
@@ -509,8 +1145,8 @@ def reconstruction(args, return_bbox=False, return_memory=False,
 
             # if not args.ndc_ray and iteration == update_AlphaMask_list[1]:
             #     # filter rays outside the bbox
-            #     # allrays,allrgbs = phasorf.filtering_rays(allrays,allrgbs, bbox_only=True)   # 여기서 alphamask 사용.
-            #     allrays,allrgbs = phasorf.filtering_rays(allrays,allrgbs)   # 여기서 alphamask 사용.
+            #     # allrays,allrgbs = phasorf.filtering_rays(allrays,allrgbs, bbox_only=True)   
+            #     allrays,allrgbs = phasorf.filtering_rays(allrays,allrgbs)   
             #     trainingSampler = SimpleSampler(allrgbs.shape[0],
             #                                     args.batch_size)
             #     allrays = allrays.cuda()
@@ -545,6 +1181,7 @@ def reconstruction(args, return_bbox=False, return_memory=False,
 
         # print size
         if iteration % 1000 == 0:
+            # phasorf.save(f'{logfolder}/{args.expname}.th')
             if mask_learning:
                 mask_thres_tensor[0] = phasorf.mask_thres
                 if phasorf.mask_thres == 0.5:
@@ -567,7 +1204,7 @@ def reconstruction(args, return_bbox=False, return_memory=False,
                 print(f'reduced size: {(numel - reduced)*4/1_048_576:.4f}MB')
                 logger.info(f'reduced size: {(numel - reduced)*4/1_048_576:.4f}MB')
         
-        if mask_schedule:
+        if not mask_learning and mask_schedule:
             if iteration in mask_iter:
                 phasorf.mask_thres =  mask_thres_list.pop(0)
                 mask_thres_tensor[0] = phasorf.mask_thres
@@ -579,84 +1216,9 @@ def reconstruction(args, return_bbox=False, return_memory=False,
                 logger.info(f"split {phasorf.resolution} with {phasorf.block_split} blocks. Block res = {phasorf.block_resolution} and freq is {phasorf.n_freq}. net stride: {phasorf.network_strides[1]}")
 
 
-    phasorf.save(f'{logfolder}/{args.expname}.th')
-    # test
-    if mask_learning:
-        mask_thres_tensor[0] = phasorf.mask_thres
-        if phasorf.mask_thres == 0.5:
-            m_thres = 0
-        else:
-            m_thres = torch.log((1 - mask_thres_tensor) / mask_thres_tensor) * (-1)
-    numel = sum([p.numel() for p in phasorf.parameters()])
-    if hasattr(phasorf, 'den_mask'):
-        numel -= sum([m.numel() for m in phasorf.den_mask])
-        numel -= sum([m.numel() for m in phasorf.app_mask])
-
-    print(f'Total size: {numel*4/1_048_576:.4f}MB')
-    logger.info(f'Total size: {numel*4/1_048_576:.4f}MB')
-    if hasattr(phasorf, 'den_mask'):
-        reduced = sum([d.numel() * (m < m_thres).float().mean()
-                       for d, m in zip(phasorf.den, phasorf.den_mask)]) \
-                + sum([d.numel() * (m < m_thres).float().mean()
-                       for d, m in zip(phasorf.app, phasorf.app_mask)])
-        print(f'reduced size: {(numel - reduced)*4/1_048_576:.4f}MB')
-        logger.info(f'reduced size: {(numel - reduced)*4/1_048_576:.4f}MB')
-        logger.info(f'used m_thres as {m_thres}')
-
-    if args.render_train:
-        os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
-        train_dataset = dataset(args.datadir, split='train',
-                                downsample=args.downsample_train, is_stack=True)
-        PSNRs_test = evaluation(train_dataset,phasorf, args, renderer,
-                                f'{logfolder}/imgs_train_all/', N_vis=-1,
-                                N_samples=-1, white_bg=white_bg,
-                                ndc_ray=ndc_ray,device=device)
-        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} '
-              f'<========================')
-        logger.info(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} '
-              f'<========================')
-
-    if args.render_test:
-        os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
-        PSNRs_test = evaluation(test_dataset, phasorf, args, renderer,
-                                f'{logfolder}/imgs_test_all/', N_vis=-1,
-                                N_samples=-1, white_bg=white_bg,
-                                ndc_ray=ndc_ray,device=device)
-        summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test),
-                                  global_step=iteration)
-        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} '
-              f'<========================')
-        logger.info(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} '
-              f'<========================')
-
-        if return_memory:
-            memory = np.sum([v.numel() * v.element_size()
-                             for k, v in phasorf.named_parameters()]) / 2**20
-            return np.mean(PSNRs_test), memory
-
-        return np.mean(PSNRs_test)
-
-    if args.render_path:
-        c2ws = test_dataset.render_path
-        print('========>',c2ws.shape)
-        os.makedirs(f'{logfolder}/imgs_path_all', exist_ok=True)
-        evaluation_path(test_dataset, phasorf, c2ws, renderer,
-                        f'{logfolder}/imgs_path_all/', N_vis=-1, N_samples=-1,
-                        white_bg=white_bg, ndc_ray=ndc_ray,device=device)
-    
-    if not args.render_test:
-        PSNRs_test = evaluation(test_dataset,phasorf, args, renderer, 
-                                f'{logfolder}/imgs_vis_all/', N_vis=10,
-                                N_samples=nSamples, white_bg=white_bg,
-                                ndc_ray=ndc_ray,
-                                compute_extra_metrics=args.compute_extra_metric)
-        if return_memory:
-            memory = np.sum([v.numel() * v.element_size()
-                             for k, v in phasorf.named_parameters()]) / 2**20
-            return np.mean(PSNRs_test), memory
-
-        return np.mean(PSNRs_test)
-
+    save_seperate(args, phasorf)
+    # save_all(args, phasorf)
+    # save_half(args, phasorf)
 
 
 if __name__ == '__main__':
@@ -668,20 +1230,12 @@ if __name__ == '__main__':
     args = config_parser()
     print(args)
 
-    rle = False
-    if rle:
-        if args.ckpt is None:
-            print("requires ckpt")
-            raise NotImplementedError
-        else:
-            rle_test(args)
+    if args.export_mesh:
+        export_mesh(args)
 
-    else :
-        if args.export_mesh:
-            export_mesh(args)
-
-        if args.render_only and (args.render_test or args.render_path):
-            render_test(args)
-        else:
-            reconstruction(args)
+    if args.render_only and (args.render_test or args.render_path):
+        render_test(args)
+    else:
+        reconstruction(args)
+        render_test(args)
 

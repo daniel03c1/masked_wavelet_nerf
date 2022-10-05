@@ -15,6 +15,7 @@ from .utils_fft import (
 import itertools
 from torch.utils.cpp_extension import load
 from cuda.grid import *
+from utils import qat
 
 g2l = load(name="g2l", sources=["cuda/global_to_local.cpp", "cuda/global_to_local.cu"])
 
@@ -23,7 +24,7 @@ class CPhasoMLP(PhasorBase):
     def __init__(self, aabb, gridSize, device, **kargs):
         super().__init__(aabb, gridSize, device, **kargs)
 
-    def init_phasor_volume(self, res, device, block_split, logger, mask_lr):
+    def init_phasor_volume(self, res, device, block_split, logger, mask_lr, mask):
         """ initialize volume """
         if logger is not None:
             self.logger = logger
@@ -67,16 +68,18 @@ class CPhasoMLP(PhasorBase):
         self.num_unmasked_den = 0
         self.num_unmasked_app = 0
 
-        self.mask_lr = mask_lr
-        self.logger.info(f"mask lr: {self.mask_lr}")
-
         self.ktraj_den = self.compute_ktraj(
             self.axis, self.resolution, self.den_scale)
+        
         # mask
+        self.mask_lr = mask_lr
+        self.logger.info(f"mask lr: {self.mask_lr}")
         self.den_mask = nn.ParameterList(
-            [nn.Parameter(torch.zeros_like(d)) for d in self.den])
+            [nn.Parameter(torch.zeros_like(d)) for d in self.den]) if mask else None
         self.app_mask = nn.ParameterList(
-            [nn.Parameter(torch.zeros_like(d)) for d in self.app])
+            [nn.Parameter(torch.zeros_like(d)) for d in self.app]) if mask else None
+
+        self.iter = None
 
 
         self.concat = True
@@ -205,13 +208,15 @@ class CPhasoMLP(PhasorBase):
         # this is fast because of 2d transform and matrix multiplication.
         # (N*N) logN d + Nsamples * d*d + 3 * Nsamples
         # TODO
-        Fx, Fy, Fz = features
-        # n_block, 8, 1, b_r, b_r  
-        '''
-        plogp 
-        min, max 는 fp로 가지고, (max - min) / 2^8    비슷한것 q vs 전체 q => 
         
-        '''
+        is_qat = True  # Implement qat if true
+        if is_qat:
+            Fx = qat(features[0])
+            Fy = qat(features[1])
+            Fz = qat(features[2])
+        else:
+            Fx, Fy, Fz = features
+
         if mask is not None:
             mx, my, mz = mask
             mx = torch.sigmoid(mx)
@@ -250,10 +255,6 @@ class CPhasoMLP(PhasorBase):
         num_samples = xyz_sampled.size(1)
         global_domain_min, global_domain_max = self.aabb
         points_flat = xyz_sampled.view(-1,3)
-
-        '''
-        256, 256 => 16 * 16 * 16
-        '''
 
         points_indices_3d = ((points_flat - global_domain_min) / self.voxel_size).long()
         normalize = True

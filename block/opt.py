@@ -148,9 +148,14 @@ def config_parser(cmd=None, return_parser=False):
     # Block
     # parser.add_argument("--block_split", type=int, default=16, help='How many blocks to split')
     parser.add_argument("--block_split", type=int,action='append', help='How many blocks to split')
-    parser.add_argument("--mask_lr", type=int, default=1, help='weight to the default learning rate of mask')
-    parser.add_argument("--mask_iter", type=int,action='append', default=[2000, 4000, 6000, 8000, 10000, 15000])
-    parser.add_argument("--mask_thres_list", type=float,action='append', default=[0.1, 0.2, 0.3, 0.4, 0.5, 0.51])
+    parser.add_argument("--mask_lr", type=int, default=1, help='How many blocks to split')
+    parser.add_argument("--target_block", type=int, default=1000)
+    parser.add_argument("--mask_learning", type=bool, default=False)
+    parser.add_argument("--mask_iter", type=int,action='append')
+    parser.add_argument("--mask_thres_list", type=float,action='append')
+
+    # Entropy 
+    parser.add_argument("--entropy_weight", type=float, default=-1.0)   # CAT: [0,0.3] 
 
     if return_parser:
         return parser

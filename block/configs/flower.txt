@@ -7,6 +7,8 @@ batch_size = 4096
 downsample_train = 4.0
 ndc_ray = 1
 
+target_block = 1000
+entropy_weight = -1
 n_iters = 25000
 batch_size = 4096
 N_voxel_init = 2097152 # 128**3
