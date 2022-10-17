@@ -70,7 +70,8 @@ class FreqGrid(nn.Module):
 
 class VQ(nn.Module):
     def __init__(self, resolution: int, n_chan: int, n_freq=None,
-                 freq_resolution=None, bitwidth=4, grid_num=1, channel_wise=True):
+                 freq_resolution=None, bitwidth=4, grid_num=1,
+                 channel_wise=True):
         # assume 3 axes have the same resolution
         super().__init__()
         self.resolution = resolution
@@ -150,6 +151,59 @@ class VQ(nn.Module):
             softened_mat = torch.softmax(self.indices, dim=2)
             grid = softened_mat @ self.codebook
         return grid.view(3, -1, self.resolution, self.resolution)
+
+
+class TensoRF_VM(nn.Module):
+    def __init__(self, resolution: int, n_chan: int, out_dim=1):
+        # assume 3 axes have the same resolution
+        super().__init__()
+        self.resolution = resolution
+        self.n_chan = n_chan
+
+        self.planes = nn.Parameter(
+            1e-1 * torch.randn(3, n_chan, resolution, resolution),
+            requires_grad=True)
+        self.vectors = nn.Parameter(
+            1e-1 * torch.randn(3, n_chan, 1, resolution),
+            requires_grad=True)
+
+        if out_dim > 1:
+            self.basis_mat = nn.Linear(n_chan*3, out_dim, bias=False)
+        else:
+            self.basis_mat = None
+
+    def forward(self, coords, *args, **kwargs):
+        # [B, 3] to [1, B, 1, 3]
+        coords = coords.reshape(1, -1, 1, coords.shape[-1])
+
+        # features from planes
+        grid = self.planes
+        p_feats = F.grid_sample(grid, torch.cat([coords[..., (1, 2)],
+                                                 coords[..., (0, 2)],
+                                                 coords[..., (0, 1)]], 0),
+                                mode='bilinear',
+                                padding_mode='zeros', align_corners=True)
+        p_feats = p_feats.squeeze(-1).permute(2, 1, 0) # [B, C, 3]
+
+        # features from Vectors
+        grid = self.vectors
+        v_feats = F.grid_sample(grid, F.pad(torch.cat([coords[..., (0,)],
+                                                       coords[..., (1,)],
+                                                       coords[..., (2,)]], 0),
+                                            (1, 0)),
+                                mode='bilinear',
+                                padding_mode='zeros', align_corners=True)
+        v_feats = v_feats.squeeze(-1).permute(2, 1, 0) # [B, C, 3]
+
+        features = (p_feats * v_feats).flatten(1, -1) # [B, C*3]
+
+        if self.basis_mat is not None:
+            return self.basis_mat(features).squeeze(-1)
+        return features.sum(-1)
+
+    def compute_tv(self):
+        return F.mse_loss(self.planes[..., 1:, :], self.planes[..., :-1, :]) \
+            + F.mse_loss(self.planes[..., 1:], self.planes[..., :-1])
 
 
 class PREF(nn.Module):

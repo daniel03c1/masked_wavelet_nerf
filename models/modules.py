@@ -24,7 +24,7 @@ def get_activation(activation, **kwargs):
 
 
 class Softplus(nn.Module):
-    def __init__(self, shift=0):
+    def __init__(self, shift=-10):
         super().__init__()
         self.shift = shift
 
@@ -33,6 +33,17 @@ class Softplus(nn.Module):
 
 
 """         MODULES         """
+class LinearWithActivation(nn.Module):
+    def __init__(self, in_features, out_features, activation=None,
+                 *args, **kwargs):
+        super().__init__()
+        self.linear = nn.Linear(in_features, out_features, *args, **kwargs)
+        self.activation = get_activation(activation)
+
+    def forward(self, inputs):
+        return self.activation(self.linear(inputs))
+
+
 class MLP(nn.Module):
     def __init__(self, feat_dim, out_dim=3,
                  include_feat=True, include_pos=False, include_view=False,
@@ -52,15 +63,24 @@ class MLP(nn.Module):
                 + 3 * (include_pos + 2 * pos_n_freq) \
                 + 3 * (include_view + 2 * view_n_freq)
 
-        mlp = [nn.Linear(in_size, hidden_dim if n_layers > 1 else out_dim)]
-        for i in range(n_layers-1):
-            mlp.extend([get_activation(inner_activation),
-                        nn.Linear(hidden_dim,
-                                  hidden_dim if i < n_layers - 2 else out_dim)])
-        mlp.append(get_activation(out_activation))
-
-        self.mlp = nn.Sequential(*mlp)
-        nn.init.constant_(self.mlp[-2].bias, 0)
+        if n_layers == 1:
+            self.modulator = None
+            mlp = [LinearWithActivation(in_size, out_dim,
+                                        activation=out_activation)]
+        else:
+            self.modulator = None # nn.Linear(in_size, hidden_dim)
+            mlp = [LinearWithActivation(in_size, hidden_dim,
+                                        activation=inner_activation)]
+            for i in range(n_layers-1):
+                if i < n_layers - 2:
+                    out_size = hidden_dim
+                    activation = inner_activation
+                else:
+                    out_size = out_dim
+                    activation = out_activation
+                mlp.append(LinearWithActivation(hidden_dim, out_size,
+                                                activation=activation))
+        self.mlp = nn.ModuleList(mlp)
 
     def forward(self, pts, viewdirs, features):
         inputs = []
@@ -78,7 +98,14 @@ class MLP(nn.Module):
         if self.view_n_freq > 0:
             inputs.append(positional_encoding(viewdirs, self.view_n_freq))
 
-        return self.mlp(torch.cat(inputs, -1))
+        outputs = torch.cat(inputs, -1)
+        weight = 1 if self.modulator is None else self.modulator(outputs)
+
+        for i, m in enumerate(self.mlp):
+            outputs = m(outputs)
+            if i < len(self.mlp) - 1:
+                outputs = outputs * weight
+        return outputs
 
 
 def SHRender(xyz_sampled, viewdirs, features):
@@ -89,6 +116,24 @@ def SHRender(xyz_sampled, viewdirs, features):
 
 def RGBRender(xyz_sampled, viewdirs, features):
     return features
+
+
+"""        ETC        """
+class EmptyMLP(nn.Module):
+    def forward(self, pts, viewdirs, features):
+        return features
+
+
+class LRAmplifier(nn.Module):
+    def __init__(self, module, scale=1):
+        super().__init__()
+        self.module = module
+        self.scale = scale
+
+    def forward(self, *args, **kwargs):
+        outputs = self.module(*args, **kwargs)
+        outputs = (1 - self.scale) * outputs.detach() + self.scale * outputs
+        return outputs
 
 
 """         POSITIONAL_ENCODING         """
@@ -123,6 +168,6 @@ class PosEncoding(nn.Module):
 
 def positional_encoding(positions, freqs):
     freq_bands = (torch.pi*2**torch.arange(freqs).float()).to(positions.device)
-    pts = (positions[..., None] * freq_bands).reshape(*positions.shape[:-1], -1)
+    pts = (positions[..., None]*freq_bands).reshape(*positions.shape[:-1], -1)
     return torch.cat([torch.sin(pts), torch.cos(pts)], dim=-1)
 
