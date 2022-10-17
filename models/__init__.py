@@ -1,7 +1,9 @@
 import numpy as np
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import tqdm
 
 from .modules import get_activation
 
@@ -52,7 +54,7 @@ class Renderer(nn.Module):
                  near=2, far=7, white_bg=True,
                  use_alpha=True, min_alpha_requirement=1e-4,
                  normalize_coords=True,
-                 density_scale=25,
+                 density_scale=1, # 25,
                  density_activation=None, appearance_activation=None):
         super().__init__()
         """
@@ -91,6 +93,7 @@ class Renderer(nn.Module):
         outputs = []
         for rays_minibatch in torch.split(rays, batch_size):
             outputs.append(self.render(rays_minibatch))
+
         return list(map(torch.cat, zip(*outputs)))
 
     def render(self, rays):
@@ -150,7 +153,7 @@ class Renderer(nn.Module):
                 rgb[app_mask] += self.appearance_activation(
                     self.appearance_net(pts[app_mask], viewdirs[app_mask]))
         else:
-            outs = self.main_net(pts[valid_rays])
+            outs = self.main_net(pts[valid_rays], viewdirs[valid_rays])
             sigma = self.density_activation(outs[..., 0] * self.density_scale)
             rgb = self.appearance_activation(outs[..., 1:])
 
@@ -162,6 +165,7 @@ class Renderer(nn.Module):
 
         acc_map = torch.sum(weights, -1)
         rgb_map = torch.sum(weights[..., None] * rgb, -2)
+
         if self.white_bg:
             rgb_map = rgb_map + (1. - acc_map[..., None])
         rgb_map = rgb_map.clamp(min=0, max=1)
@@ -170,7 +174,7 @@ class Renderer(nn.Module):
 
         return rgb_map, depth_map
 
-    def evaluation(self, test_dataset, save_path=None,
+    def evaluation(self, test_dataset, batch_size=4096, save_path=None,
                    compute_extra_metrics=True):
         self.eval()
 
@@ -178,7 +182,6 @@ class Renderer(nn.Module):
 
         if save_path is not None:
             import imageio
-            import os
             os.makedirs(save_path, exist_ok=True)
             os.makedirs(os.path.join(save_path, "rgbd"), exist_ok=True)
 
@@ -195,65 +198,72 @@ class Renderer(nn.Module):
         except Exception:
             gt_exist = False
 
-        for idx in range(len(test_dataset)):
-            W, H = test_dataset.img_wh
+        with torch.no_grad():
+            for idx in tqdm.tqdm(range(len(test_dataset))):
+                W, H = test_dataset.img_wh
 
-            rays = test_dataset.all_rays[idx]
-            rays = rays.view(-1, rays.shape[-1]).cuda(non_blocking=True)
+                rays = test_dataset.all_rays[idx]
+                rays = rays.view(-1, rays.shape[-1]).cuda(non_blocking=True)
 
-            with torch.no_grad():
-                rgb_map, depth_map = self.forward(rays)
+                rgb_map, depth_map = self.forward(rays, batch_size=batch_size)
 
-            rgb_map = rgb_map.reshape(H, W, 3)
-            depth_map = depth_map.reshape(H, W)
+                rgb_map = rgb_map.reshape(H, W, 3)
+                depth_map = depth_map.reshape(H, W)
 
-            if gt_exist:
-                gt_rgb = test_dataset.all_rgbs[idx].view(H, W, 3) \
-                                                   .cuda(non_blocking=True)
+                if gt_exist:
+                    gt_rgb = test_dataset.all_rgbs[idx].view(H, W, 3) \
+                                                       .cuda(non_blocking=True)
 
-                loss = F.mse_loss(rgb_map, gt_rgb)
-                PSNRs.append(-10.0 * torch.log(loss) / np.log(10.0))
+                    loss = F.mse_loss(rgb_map, gt_rgb)
+                    PSNRs.append(-10.0 * torch.log(loss) / np.log(10.0))
 
-                if compute_extra_metrics:
-                    gt = gt_rgb.permute([2, 0, 1]).contiguous()
-                    im = rgb_map.permute([2, 0, 1]).contiguous()
+                    if compute_extra_metrics:
+                        gt = gt_rgb.permute([2, 0, 1]).contiguous()
+                        im = rgb_map.permute([2, 0, 1]).contiguous()
 
-                    ssims.append(ssim(im[None], gt[None], data_range=1))
-                    l_alex.append(lpips_alex(gt, im, normalize=True))
-                    l_vgg.append(lpips_vgg(gt, im, normalize=True))
+                        ssims.append(ssim(im[None], gt[None], data_range=1))
+                        l_alex.append(lpips_alex(gt, im, normalize=True))
+                        l_vgg.append(lpips_vgg(gt, im, normalize=True))
 
-            rgb_map = (rgb_map * 255).int()
-            rgb_maps.append(rgb_map)
-            depth_maps.append(depth_map)
+                    del gt_rgb
 
-            if save_path is not None:
-                imageio.imwrite(os.path.join(save_path, f'{idx:03d}.png'),
-                                rgb_map.cpu().numpy())
-                rgb_map = torch.concat((rgb_map, depth_map), axis=1)
-                imageio.imwrite(os.path.join(save_path, f'rgbd/{idx:03d}.png'),
-                                rgb_map.cpu().numpy())
+                rgb_map = (rgb_map * 255).int()
+                rgb_maps.append(rgb_map.cpu())
+                depth_maps.append(depth_map.cpu())
+
+                if save_path is not None:
+                    imageio.imwrite(os.path.join(save_path, f'{idx:03d}.png'),
+                                    rgb_map.cpu().numpy())
+                    rgb_map = torch.concat((rgb_map, depth_map), axis=1)
+                    imageio.imwrite(os.path.join(save_path,
+                                                 f'rgbd/{idx:03d}.png'),
+                                    rgb_map.cpu().numpy())
+
+                del rays, rgb_map, depth_map
 
         if save_path is not None:
             imageio.mimwrite(os.path.join(save_path, f'video.mp4'),
-                             torch.stack(rgb_maps).cpu().numpy(),
+                             torch.stack(rgb_maps).numpy(),
                              fps=30, quality=10)
             imageio.mimwrite(os.path.join(save_path, f'depthvideo.mp4'),
-                             torch.stack(depth_maps).cpu().numpy(),
+                             torch.stack(depth_maps).numpy(),
                              fps=30, quality=10)
 
-        if gt_exists:
-            psnr = torch.cat(PSNRs).mean().cpu().numpy()
+        if gt_exist:
+            psnr = torch.stack(PSNRs).mean().cpu().numpy()
 
             if compute_extra_metrics:
-                avg_ssim = torch.cat(ssims).mean().cpu().numpy()
-                avg_l_a = torch.cat(l_alex).mean().cpu().numpy()
-                avg_l_v = torch.cat(l_vgg).mean().cpu().numpy()
-                print(f'ssim: {avg_ssim}, LPIPS(alexnet): {avg_l_a}, '
-                      f'LPIPS(vgg): {avg_l_v}')
-                np.savetxt(f'{save_path}/{prtx}mean.txt',
-                           np.asarray([psnr, avg_ssim, avg_l_a, avg_l_v]))
-            else:
-                np.savetxt(f'{save_path}/{prtx}mean.txt', np.asarray([psnr]))
+                avg_ssim = torch.stack(ssims).mean().cpu().numpy()
+                avg_l_a = torch.stack(l_alex).mean().cpu().numpy()
+                avg_l_v = torch.stack(l_vgg).mean().cpu().numpy()
+                print(f'ssim: {avg_ssim:.4f}, LPIPS(alexnet): {avg_l_a:.4f}, '
+                      f'LPIPS(vgg): {avg_l_v:.4f}')
+                if save_path is not None:
+                    np.savetxt(os.path.join(save_path, 'mean.txt'),
+                               np.asarray([psnr, avg_ssim, avg_l_a, avg_l_v]))
+            elif save_path is not None:
+                np.savetxt(os.path.join(save_path, 'mean.txt'),
+                           np.asarray([psnr]))
 
         self.train()
 

@@ -98,8 +98,9 @@ def main(args):
           'lr': 1e-3},
          {'params': appearance_net.second_stage.parameters(), 'lr': 1e-3}],
         betas=(0.9, 0.99))
-    scheduler = get_cos_warmup_scheduler(optimizer, args.n_iters, 0)
-    scaler = torch.cuda.amp.GradScaler()
+    scheduler = get_cos_warmup_scheduler(optimizer, args.n_iters, 0,
+                                         min_ratio=0.1)
+    # scaler = torch.cuda.amp.GradScaler()
 
     pbar = tqdm(range(args.n_iters))
     for i in pbar:
@@ -109,24 +110,24 @@ def main(args):
 
         optimizer.zero_grad()
 
-        with torch.cuda.amp.autocast(enabled=True):
-            rgb_map, depth_map = renderer(rays_train)
+        # with torch.cuda.amp.autocast(enabled=True):
+        rgb_map, depth_map = renderer(rays_train)
 
-            loss = F.mse_loss(rgb_map, rgb_train)
+        loss = F.mse_loss(rgb_map, rgb_train)
 
-            # loss
-            total_loss = loss
-            if args.tv_weight > 0:
-                total_loss += renderer.compute_tv() * args.tv_weight
+        # loss
+        total_loss = loss
+        if args.tv_weight > 0:
+            total_loss += renderer.compute_tv() * args.tv_weight
 
-            assert not torch.isnan(loss)
-            scaler.scale(total_loss).backward(retain_graph=True)
+        assert not torch.isnan(loss)
+        # scaler.scale(total_loss).backward(retain_graph=True)
 
-        # total_loss.backward()
-        # optimizer.step()
-        scaler.unscale_(optimizer)
-        scaler.step(optimizer)
-        scaler.update()
+        total_loss.backward()
+        optimizer.step()
+        # scaler.unscale_(optimizer)
+        # scaler.step(optimizer)
+        # scaler.update()
 
         scheduler.step()
 
@@ -136,7 +137,8 @@ def main(args):
         if i + 1 in [500, 1000, 2500, 5000, 10000, 20000]:
             print()
 
-    PSNRs_test = rendere.evaluation(test_dataset)
+    # Evaluation
+    PSNRs_test = renderer.evaluation(test_dataset)
     print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} '
           f'<========================')
 
