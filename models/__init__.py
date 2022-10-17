@@ -54,7 +54,7 @@ class Renderer(nn.Module):
                  near=2, far=7, white_bg=True,
                  use_alpha=True, min_alpha_requirement=1e-4,
                  normalize_coords=True,
-                 density_scale=1, # 25,
+                 density_scale=25,
                  density_activation=None, appearance_activation=None):
         super().__init__()
         """
