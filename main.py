@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 from dataLoader import dataset_dict
 from models import TwoStageNeuralField, Renderer
 from models.grid_based import TensoRF_VM
-from models.modules import MLP, Softplus, EmptyMLP, LRAmplifier
+from models.modules import MLP, Softplus, EmptyMLP
 from utils import *
 
 
