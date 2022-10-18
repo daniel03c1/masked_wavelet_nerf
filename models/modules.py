@@ -124,18 +124,6 @@ class EmptyMLP(nn.Module):
         return features
 
 
-class LRAmplifier(nn.Module):
-    def __init__(self, module, scale=1):
-        super().__init__()
-        self.module = module
-        self.scale = scale
-
-    def forward(self, *args, **kwargs):
-        outputs = self.module(*args, **kwargs)
-        outputs = (1 - self.scale) * outputs.detach() + self.scale * outputs
-        return outputs
-
-
 """         POSITIONAL_ENCODING         """
 class PosEncoding(nn.Module):
     def __init__(self, in_features, n_freqs, include_inputs=False):
