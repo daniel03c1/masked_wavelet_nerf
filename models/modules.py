@@ -81,6 +81,8 @@ class MLP(nn.Module):
                 mlp.append(LinearWithActivation(hidden_dim, out_size,
                                                 activation=activation))
         self.mlp = nn.ModuleList(mlp)
+        with torch.no_grad():
+            torch.nn.init.constant_(self.mlp[-1].linear.bias, 0)
 
     def forward(self, pts, viewdirs, features):
         inputs = []
@@ -155,7 +157,7 @@ class PosEncoding(nn.Module):
 
 
 def positional_encoding(positions, freqs):
-    freq_bands = (torch.pi*2**torch.arange(freqs).float()).to(positions.device)
+    freq_bands = 2**torch.arange(freqs).float().to(positions.device)
     pts = (positions[..., None]*freq_bands).reshape(*positions.shape[:-1], -1)
     return torch.cat([torch.sin(pts), torch.cos(pts)], dim=-1)
 

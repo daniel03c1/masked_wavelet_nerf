@@ -139,7 +139,7 @@ class Renderer(nn.Module):
 
             if valid_rays.any():
                 sigma[valid_rays] = self.density_activation(
-                    self.main_net(pts[valid_rays]) * self.density_scale)
+                    self.main_net(pts[valid_rays])) * self.density_scale
 
             # alpha & weights
             alpha = 1. - torch.exp(-sigma * dists)
@@ -154,7 +154,7 @@ class Renderer(nn.Module):
                     self.appearance_net(pts[app_mask], viewdirs[app_mask]))
         else:
             outs = self.main_net(pts[valid_rays], viewdirs[valid_rays])
-            sigma = self.density_activation(outs[..., 0] * self.density_scale)
+            sigma = self.density_activation(outs[..., 0]) * self.density_scale
             rgb = self.appearance_activation(outs[..., 1:])
 
             # alpha & weights
