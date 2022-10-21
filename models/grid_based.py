@@ -168,7 +168,10 @@ class TensoRF_VM(nn.Module):
             1e-1 * torch.randn(3, n_chan, 1, resolution),
             requires_grad=True)
 
-        self.basis_mat = nn.Linear(n_chan*3, out_dim, bias=False)
+        if out_dim > 1:
+            self.basis_mat = nn.Linear(n_chan*3, out_dim, bias=False)
+        else:
+            self.basis_mat = None
 
     def forward(self, coords, *args, **kwargs):
         # [B, 3] to [1, B, 1, 3]
@@ -188,14 +191,17 @@ class TensoRF_VM(nn.Module):
         feats1 = F.grid_sample(grid, F.pad(torch.cat([coords[..., (0,)],
                                                        coords[..., (1,)],
                                                        coords[..., (2,)]], 0),
-                                            (1, 0)),
+                                            (0, 1)),
                                 mode='bilinear',
                                 padding_mode='zeros', align_corners=True)
         feats1 = feats1.squeeze(-1).permute(2, 1, 0) # [B, C, 3]
 
         feats0 = (feats0 * feats1).flatten(1, -1) # [B, C*3]
         del feats1
-        return self.basis_mat(feats0).squeeze(-1)
+
+        if self.basis_mat is not None:
+            return self.basis_mat(feats0).squeeze(-1)
+        return feats0.sum(dim=-1)
 
     def compute_tv(self):
         return F.mse_loss(self.planes[..., 1:, :], self.planes[..., :-1, :]) \

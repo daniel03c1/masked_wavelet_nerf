@@ -104,6 +104,7 @@ class Renderer(nn.Module):
             rays: [..., 6] shaped tensor (3 for origin, 3 for direction)
         """
         rays_o, rays_d = rays[..., :3], rays[..., 3:] # origins, viewdirs
+
         z_vals = torch.linspace(self.near, self.far,
                                 self.n_samples_per_ray).unsqueeze(0).to(rays_o)
 
@@ -142,7 +143,7 @@ class Renderer(nn.Module):
                     self.main_net(pts[valid_rays])) * self.density_scale
 
             # alpha & weights
-            alpha = 1. - torch.exp(-sigma * dists)
+            alpha = 1. - torch.exp(-sigma * dists * self.density_scale)
             weights = alpha * torch.cumprod(F.pad(1 - alpha + 1e-10, [1, 0],
                                                   value=1),
                                             -1)[..., :-1] # exclusive cumprod
