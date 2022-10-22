@@ -11,12 +11,14 @@ from .ray_utils import *
 
 class BlenderDataset(torch.utils.data.Dataset):
     def __init__(self, datadir, split='train', downsample=1.0, is_stack=False,
-                 n_vis=-1):
+                 n_vis=-1, verbose=True):
         self.root_dir = datadir
         self.split = split
         self.downsample = downsample
         self.is_stack = is_stack
         self.n_vis = n_vis
+
+        self.verbose = verbose
 
         self.img_wh = (int(800/downsample), int(800/downsample))
         self.transform = T.ToTensor()
@@ -66,7 +68,12 @@ class BlenderDataset(torch.utils.data.Dataset):
         img_eval_interval = 1 if self.n_vis < 0 else len(self.meta['frames']) // self.n_vis
         idxs = list(range(0, len(self.meta['frames']), img_eval_interval))
 
-        for i in tqdm(idxs, desc=f'Loading data {self.split} ({len(idxs)})'):
+        if self.verbose:
+            scope = tqdm(idxs, desc=f'Loading data {self.split} ({len(idxs)})')
+        else:
+            scope = idxs
+
+        for i in scope:
             frame = self.meta['frames'][i]
             c2w = torch.tensor(frame['transform_matrix']) @ self.blender2opencv
             self.poses += [c2w]
