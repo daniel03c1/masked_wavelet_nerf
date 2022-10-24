@@ -18,6 +18,8 @@ import ray
 from ray import tune
 from ray.air import session
 from ray.tune.search.optuna import OptunaSearch
+from sympy import Symbol
+from sympy.solvers import solve
 
 
 parser = configargparse.ArgumentParser()
@@ -39,22 +41,27 @@ parser.add_argument('--dataset_name', type=str, default='blender',
 
 # network decoder
 parser.add_argument("--den_res", type=int, default=300)
-parser.add_argument("--den_chan", type=int, default=16)
+# parser.add_argument("--den_chan", type=int, default=16)
 parser.add_argument("--app_res", type=int, default=300)
-parser.add_argument("--app_chan", type=int, default=48)
+# parser.add_argument("--app_chan", type=int, default=48)
+parser.add_argument("--feat_dim", type=int, default=27)
 
+parser.add_argument("--include_feat", action='store_true')
+parser.add_argument("--include_pos", action='store_true')
+parser.add_argument("--include_view", action='store_true')
 parser.add_argument("--pos_pe", type=int, default=0,
                     help='number of pe for pos')
 parser.add_argument("--view_pe", type=int, default=2,
                     help='number of pe for view')
 parser.add_argument("--feat_pe", type=int, default=2,
                     help='number of pe for features')
+parser.add_argument("--n_layers", type=int, default=3)
 parser.add_argument("--hidden_dim", type=int, default=128,
                     help='hidden feature channel in MLP')
 
 # training hyperparameters
 parser.add_argument("--batch_size", type=int, default=4096)
-parser.add_argument("--n_iters", type=int, default=30000)
+parser.add_argument("--n_iters", type=int, default=500) # 30000)
 parser.add_argument("--lr_init", type=float, default=0.02)
 parser.add_argument("--tv_weight", type=float, default=0.0)
 
@@ -64,7 +71,12 @@ parser.add_argument('--n_samples', type=int, default=1036,
                     help='sample point each ray, pass 1e6 if automatic adjust')
 
 # search hyperparameters
-parser.add_argument('--num_samples', type=int, default=48,
+parser.add_argument('--den_ratio', type=float, default=0.3,
+                    help='the ratio of number of parameters of den_ratio '
+                         'compared to the total number of parameters')
+parser.add_argument('--target_sz', type=float, default=5.,
+                    help='target neural network size (MB)')
+parser.add_argument('--num_samples', type=int, default=128,
                     help='the total number of samples used for searching')
 args = parser.parse_args()
 
@@ -94,15 +106,35 @@ def main(config):
 
     # TODO(daniel): loading weights
 
+    total_numel = args.target_sz * 1_048_576 * 8 / 32
+    den_numel = args.den_ratio * total_numel
+    x = Symbol('x')
+    eq = 3 * x * (args.den_res + 1) * args.den_res - den_numel
+    args.den_chan = int(max(solve(eq)))
+    assert args.den_chan > 0
+
+    app_numel = total_numel - den_numel
+    x = Symbol('x')
+    in_size = args.feat_dim * (args.include_feat + 2 * args.feat_pe) \
+            + 3 * (args.include_pos + 2 * args.pos_pe) \
+            + 3 * (args.include_view + 2 * args.view_pe)
+    eq = 3 * x * (args.app_res + 1) * args.app_res + 3 * x * args.feat_dim \
+       + in_size * ((args.n_layers == 1) * 3 + (args.n_layers > 1) * args.hidden_dim) + (args.n_layers - 1) * args.hidden_dim ** 2 + (args.n_layers > 1) * args.hidden_dim * 3 \
+       - app_numel
+    args.app_chan = int(max(solve(eq)))
+    assert args.app_chan > 0
+
     # defining networks
     density_net = TwoStageNeuralField(
         TensoRF_VM(int(args.den_res), int(args.den_chan), 1), EmptyMLP()).cuda()
     appearance_net = TwoStageNeuralField(
-        TensoRF_VM(int(args.app_res), int(args.app_chan), 27),
-        MLP(27, include_pos=False, include_view=True,
-            feat_n_freq=args.feat_pe, pos_n_freq=args.pos_pe,
-            view_n_freq=args.view_pe,
-            hidden_dim=args.hidden_dim, out_activation='sigmoid')).cuda()
+        TensoRF_VM(int(args.app_res), int(args.app_chan), int(args.feat_dim)),
+        MLP(int(args.feat_dim), include_feat=args.include_feat,
+            include_pos=args.include_pos, include_view=args.include_view,
+            feat_n_freq=int(args.feat_pe), pos_n_freq=int(args.pos_pe),
+            view_n_freq=int(args.view_pe),
+            hidden_dim=int(args.hidden_dim), n_layers=int(args.n_layers),
+            out_activation='sigmoid')).cuda()
 
     renderer = Renderer(density_net, appearance_net,
                         n_samples_per_ray=n_samples,
@@ -156,16 +188,26 @@ def main(config):
     # Evaluation
     # PSNRs_test = [p.cpu() for p in renderer.evaluation(test_dataset)]
     session.report({'psnr': psnr,
-                    'size': renderer.compute_bits() / 8_388_608})
+                    'size': renderer.compute_bits() / 8_388_608,
+                    'config/den_chan': args.den_chan,
+                    'config/app_chan': args.app_chan})
 
 
 if __name__ == '__main__':
     search_space = {
         'lr_init': tune.qloguniform(1e-4, 1e-1, 1e-4),
+        'den_ratio': tune.uniform(0.1, 0.5),
         'den_res': tune.quniform(100, 300, 10),
-        'den_chan': tune.quniform(8, 24, 2),
         'app_res': tune.quniform(100, 300, 10),
-        'app_chan': tune.quniform(8, 24, 2),
+        'feat_dim': tune.quniform(1, 64, 1),
+        'include_feat': tune.choice([True, False]),
+        'feat_pe': tune.quniform(0, 6, 1),
+        'include_pos': tune.choice([True, False]),
+        'pos_pe': tune.quniform(0, 6, 1),
+        'include_view': tune.choice([True, False]),
+        'view_pe': tune.quniform(0, 6, 1),
+        'n_layers': tune.quniform(1, 5, 1),
+        'hidden_dim': tune.quniform(8, 128, 4),
     }
 
     algo = OptunaSearch()
@@ -178,6 +220,5 @@ if __name__ == '__main__':
         param_space=search_space)
 
     results = tuner.fit()
-    breakpoint()
-    print()
+    results.get_dataframe().to_csv(f'results({args.target_sz}).csv')
 
