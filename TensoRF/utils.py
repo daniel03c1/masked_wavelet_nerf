@@ -50,16 +50,16 @@ def visualize_depth(depth, minmax=None, cmap=cv2.COLORMAP_JET):
     x_ = T.ToTensor()(x_)  # (3, H, W)
     return x_, [mi,ma]
 
-def N_to_reso(n_voxels, bbox):
+
+def N_to_reso(n_voxels, bbox, unit=16):
     xyz_min, xyz_max = bbox
     dim = len(xyz_min)
     voxel_size = ((xyz_max - xyz_min).prod() / n_voxels).pow(1 / dim)
-    return ((xyz_max - xyz_min) / voxel_size).long().tolist()
+    return (((xyz_max - xyz_min) / voxel_size / unit).long() * unit).tolist()
+
 
 def cal_n_samples(reso, step_ratio=0.5):
     return int(np.linalg.norm(reso)/step_ratio)
-
-
 
 
 __LPIPS__ = {}
@@ -68,6 +68,7 @@ def init_lpips(net_name, device):
     import lpips
     print(f'init_lpips: lpips_{net_name}')
     return lpips.LPIPS(net=net_name, version='0.1').eval().to(device)
+
 
 def rgb_lpips(np_gt, np_im, net_name, device):
     if net_name not in __LPIPS__:
@@ -219,3 +220,4 @@ def convert_sdf_samples_to_ply(
     ply_data = plyfile.PlyData([el_verts, el_faces])
     print("saving mesh to %s" % (ply_filename_out))
     ply_data.write(ply_filename_out)
+

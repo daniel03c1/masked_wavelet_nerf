@@ -1,6 +1,5 @@
-
 dataset_name = blender
-datadir = ../nerf_synthetic/chair
+datadir = ../../nerf_synthetic/chair
 expname =  tensorf_lego_VM
 basedir = ./log
 
@@ -15,30 +14,33 @@ update_AlphaMask_list = [2000, 4000]
 N_vis = 5
 vis_every = 10000
 
-# lr_init = 0.005 # 0.001 # 0.5 # 0.02 # test
+# lr_init = 0.01 # 0.001 # 0.5 # 0.02 # test
 # lr_basis = 0.005 # 0.001 # 0.02 # 0.001 # test
 
 render_test = 1
 
-n_lamb_sigma = [16, 16, 16]
-n_lamb_sh = [48, 48, 48]
+n_lamb_sigma = [16, 16, 16] # 3, 3, 3] # 16, 16, 16]
+n_lamb_sh = [48, 48, 48] # 6, 6, 6] # 48, 48, 48]
 model_name = TensorVMSplit
 
 shadingMode = MLP_Fea
 fea2denseAct = softplus
 
-view_pe = 2
-fea_pe = 2
+pos_pe = 0 # 6 # None
+view_pe = 2 # 3 # 2
+fea_pe = 2 # 7 # 3 # 2
+featureC = 128 # 116 # 128
+# data_dim_color = 64 # 22 # 8 # 2
 
 L1_weight_inital = 0 # 8e-5
 L1_weight_rest = 0 # 4e-5
 rm_weight_mask_thre = 1e-4
 
 ## please uncomment following configuration if hope to training on cp model
-#model_name = TensorCP
-#n_lamb_sigma = [96]
-#n_lamb_sh = [288]
-#N_voxel_final = 125000000 # 500**3
-#L1_weight_inital = 1e-5
-#L1_weight_rest = 1e-5
+# model_name = TensorCP
+# n_lamb_sigma = [96]
+# n_lamb_sh = [288]
+# N_voxel_final = 125000000 # 500**3
+# L1_weight_inital = 1e-5
+# L1_weight_rest = 1e-5
 

@@ -1,5 +1,6 @@
 import configargparse
 
+
 def config_parser(cmd=None):
     parser = configargparse.ArgumentParser()
     parser.add_argument('--config', is_config_file=True,
@@ -29,7 +30,6 @@ def config_parser(cmd=None):
     parser.add_argument('--dataset_name', type=str, default='blender',
                         choices=['blender', 'llff', 'nsvf', 'dtu','tankstemple', 'own_data'])
 
-
     # training options
     # learning rate
     parser.add_argument("--lr_init", type=float, default=0.02,
@@ -44,6 +44,7 @@ def config_parser(cmd=None):
                         help='reset lr to inital after upsampling')
 
     # loss
+    parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--L1_weight_inital", type=float, default=0.0,
                         help='loss weight')
     parser.add_argument("--L1_weight_rest", type=float, default=0,
@@ -70,7 +71,12 @@ def config_parser(cmd=None):
     parser.add_argument("--density_shift", type=float, default=-10,
                         help='shift density in softplus; making density = 0  when feature == 0')
                         
+    # My Options
     parser.add_argument("--grid_bit", type=int, default=32)
+    parser.add_argument("--use_mask", action='store_true')
+    parser.add_argument("--mask_weight", type=float, default=0)
+    parser.add_argument("--use_dwt", action='store_true')
+    parser.add_argument("--dwt_level", type=int, default=2)
 
     # network decoder
     parser.add_argument("--shadingMode", type=str, default="MLP_PE",
@@ -83,8 +89,6 @@ def config_parser(cmd=None):
                         help='number of pe for features')
     parser.add_argument("--featureC", type=int, default=128,
                         help='hidden feature channel in MLP')
-    
-
 
     parser.add_argument("--ckpt", type=str, default=None,
                         help='specific weights npy file to reload for coarse network')
@@ -106,12 +110,9 @@ def config_parser(cmd=None):
                         help='sample point each ray, pass 1e6 if automatic adjust')
     parser.add_argument('--step_ratio',type=float,default=0.5)
 
-
     ## blender flags
     parser.add_argument("--white_bkgd", action='store_true',
                         help='set to render synthetic data on a white bkgd (always use for dvoxels)')
-
-
 
     parser.add_argument('--N_voxel_init',
                         type=int,
@@ -134,3 +135,4 @@ def config_parser(cmd=None):
         return parser.parse_args(cmd)
     else:
         return parser.parse_args()
+

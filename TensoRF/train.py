@@ -1,19 +1,14 @@
-
-import os
-from tqdm.auto import tqdm
-from opt import config_parser
-
-
-
-import json, random
-from renderer import *
-from utils import *
-from torch.utils.tensorboard import SummaryWriter
 import datetime
+import os
+import random
+import sys
+from torch.utils.tensorboard import SummaryWriter
+from tqdm.auto import tqdm
 
 from dataLoader import dataset_dict
-import sys
-
+from opt import config_parser
+from renderer import *
+from utils import *
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -49,7 +44,6 @@ class SimpleSampler:
 
 @torch.no_grad()
 def export_mesh(args):
-
     ckpt = torch.load(args.ckpt, map_location=device)
     kwargs = ckpt['kwargs']
     kwargs.update({'device': device})
@@ -57,14 +51,16 @@ def export_mesh(args):
     tensorf.load(ckpt)
 
     alpha,_ = tensorf.getDenseAlpha()
-    convert_sdf_samples_to_ply(alpha.cpu(), f'{args.ckpt[:-3]}.ply',bbox=tensorf.aabb.cpu(), level=0.005)
+    convert_sdf_samples_to_ply(alpha.cpu(), f'{args.ckpt[:-3]}.ply',
+                               bbox=tensorf.aabb.cpu(), level=0.005)
 
 
 @torch.no_grad()
 def render_test(args):
     # init dataset
     dataset = dataset_dict[args.dataset_name]
-    test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
+    test_dataset = dataset(args.datadir, split='test',
+                           downsample=args.downsample_train, is_stack=True)
     white_bg = test_dataset.white_bg
     ndc_ray = args.ndc_ray
 
@@ -97,8 +93,8 @@ def render_test(args):
         evaluation_path(test_dataset,tensorf, c2ws, renderer, f'{logfolder}/{args.expname}/imgs_path_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
 
-def reconstruction(args):
 
+def reconstruction(args):
     # init dataset
     dataset = dataset_dict[args.dataset_name]
     train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=False)
@@ -112,14 +108,12 @@ def reconstruction(args):
     update_AlphaMask_list = args.update_AlphaMask_list
     n_lamb_sigma = args.n_lamb_sigma
     n_lamb_sh = args.n_lamb_sh
-
     
     if args.add_timestamp:
         logfolder = f'{args.basedir}/{args.expname}{datetime.datetime.now().strftime("-%Y%m%d-%H%M%S")}'
     else:
         logfolder = f'{args.basedir}/{args.expname}'
     
-
     # init log file
     os.makedirs(logfolder, exist_ok=True)
     os.makedirs(f'{logfolder}/imgs_vis', exist_ok=True)
@@ -129,6 +123,7 @@ def reconstruction(args):
 
     # init parameters
     aabb = train_dataset.scene_bbox.to(device)
+
     reso_cur = N_to_reso(args.N_voxel_init, aabb)
     nSamples = min(args.nSamples, cal_n_samples(reso_cur,args.step_ratio))
 
@@ -139,13 +134,22 @@ def reconstruction(args):
         tensorf = eval(args.model_name)(**kwargs)
         tensorf.load(ckpt)
     else:
-        tensorf = eval(args.model_name)(aabb, reso_cur, device,
-                    density_n_comp=n_lamb_sigma, appearance_n_comp=n_lamb_sh, app_dim=args.data_dim_color, near_far=near_far,
-                    shadingMode=args.shadingMode, alphaMask_thres=args.alpha_mask_thre, density_shift=args.density_shift, distance_scale=args.distance_scale,
-                    pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe, featureC=args.featureC, step_ratio=args.step_ratio, fea2denseAct=args.fea2denseAct, grid_bit=args.grid_bit)
+        tensorf = eval(args.model_name)(
+            aabb, reso_cur, device,
+            density_n_comp=n_lamb_sigma, appearance_n_comp=n_lamb_sh,
+            app_dim=args.data_dim_color, near_far=near_far,
+            shadingMode=args.shadingMode, alphaMask_thres=args.alpha_mask_thre,
+            density_shift=args.density_shift,
+            distance_scale=args.distance_scale,
+            pos_pe=args.pos_pe, view_pe=args.view_pe, fea_pe=args.fea_pe,
+            featureC=args.featureC, step_ratio=args.step_ratio,
+            fea2denseAct=args.fea2denseAct,
+            grid_bit=args.grid_bit,
+            use_mask=args.use_mask,
+            use_dwt=args.use_dwt, dwt_level=args.dwt_level)
 
-    print(tensorf)
-    print(sum([p.numel() for p in tensorf.parameters()]) * 16 / 8_388_608)
+    # print(tensorf)
+    print(f'{sum([p.numel() for p in tensorf.parameters()])*32/8_388_608}MB')
 
     grad_vars = tensorf.get_optparam_groups(args.lr_init, args.lr_basis)
     if args.lr_decay_iters > 0:
@@ -155,13 +159,11 @@ def reconstruction(args):
         lr_factor = args.lr_decay_target_ratio**(1/args.n_iters)
 
     print("lr decay", args.lr_decay_target_ratio, args.lr_decay_iters)
-    
-    optimizer = torch.optim.Adam(grad_vars, betas=(0.9,0.99))
-
+    optimizer = torch.optim.Adam(grad_vars, betas=(0.9,0.99),
+                                 weight_decay=args.weight_decay)
 
     #linear in logrithmic space
     N_voxel_list = (torch.round(torch.exp(torch.linspace(np.log(args.N_voxel_init), np.log(args.N_voxel_final), len(upsamp_list)+1))).long()).tolist()[1:]
-
 
     torch.cuda.empty_cache()
     PSNRs,PSNRs_test = [],[0]
@@ -214,6 +216,17 @@ def reconstruction(args):
             loss_tv = tensorf.TV_loss_app(tvreg)*TV_weight_app
             total_loss = total_loss + loss_tv
             summary_writer.add_scalar('train/reg_tv_app', loss_tv.detach().item(), global_step=iteration)
+
+        if args.use_mask and args.mask_weight > 0:
+            mask_loss = sum([p.sum()
+                             for p in tensorf.density_plane_mask.parameters()])\
+                      + sum([p.sum()
+                             for p in tensorf.density_line_mask.parameters()])\
+                      + sum([p.sum()
+                             for p in tensorf.app_plane_mask.parameters()])\
+                      + sum([p.sum()
+                             for p in tensorf.app_line_mask.parameters()])
+            total_loss = total_loss + args.mask_weight * mask_loss
 
         optimizer.zero_grad()
         total_loss.backward()
@@ -276,32 +289,60 @@ def reconstruction(args):
                 lr_scale = 1 #0.1 ** (iteration / args.n_iters)
             else:
                 lr_scale = args.lr_decay_target_ratio ** (iteration / args.n_iters)
-            grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale, args.lr_basis*lr_scale)
-            optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99))
+            grad_vars = tensorf.get_optparam_groups(args.lr_init*lr_scale,
+                                                    args.lr_basis*lr_scale)
+            optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99),
+                                         weight_decay=args.weight_decay)
+
+        if iteration + 1 in [500, 1000, 2500, 5000, 10000, 20000]:
+            print()
         
     tensorf.save(f'{logfolder}/{args.expname}.th')
 
     grid, non_grid = tensorf_param_count(tensorf)
+    if args.use_mask:
+        grid = grid / 2 # dont count masks
     grid_bytes = grid * args.grid_bit / 8
     non_grid_bytes = non_grid * 4
     print(f'total: {(grid_bytes + non_grid_bytes)/1_048_576:.3f}MB '
             f'(G ({args.grid_bit}bit): {grid_bytes/1_048_576:.3f}MB) '
             f'(N: {non_grid_bytes/1_048_576:3f}MB)')
 
+    if args.use_mask:
+        flat_mask = torch.cat([torch.cat([p[0].flatten(), p[1].flatten(),
+                                          p[2].flatten()])
+                               for p in [tensorf.density_plane_mask,
+                                         tensorf.density_line_mask,
+                                         tensorf.app_plane_mask,
+                                         tensorf.app_line_mask]])
+        ratio = (flat_mask >= 0).float().mean()
+        print(f'non-masked ratio: {ratio:.4f}')
+        grid_bytes = grid_bytes * ratio
+        print(f'masked_total: {(grid_bytes + non_grid_bytes)/1_048_576:.3f}MB '
+                f'(G ({args.grid_bit}bit): {grid_bytes/1_048_576:.3f}MB) '
+                f'(N: {non_grid_bytes/1_048_576:3f}MB)')
+
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
-        train_dataset = dataset(args.datadir, split='train', downsample=args.downsample_train, is_stack=True)
-        PSNRs_test = evaluation(train_dataset,tensorf, args, renderer, f'{logfolder}/imgs_train_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
-        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
+        train_dataset = dataset(args.datadir, split='train',
+                                downsample=args.downsample_train, is_stack=True)
+        PSNRs_test = evaluation(train_dataset,tensorf, args, renderer,
+                                f'{logfolder}/imgs_train_all/',
+                                N_vis=-1, N_samples=-1, white_bg=white_bg,
+                                ndc_ray=ndc_ray, device=device)
+        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} '
+              f'<========================')
 
     if args.render_test:
         os.makedirs(f'{logfolder}/imgs_test_all', exist_ok=True)
-        PSNRs_test = evaluation(test_dataset, tensorf, args, renderer, f'{logfolder}/imgs_test_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
-        summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test), global_step=iteration)
-
-        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
+        PSNRs_test = evaluation(test_dataset, tensorf, args, renderer,
+                                f'{logfolder}/imgs_test_all/',
+                                N_vis=-1, N_samples=-1, white_bg=white_bg,
+                                ndc_ray=ndc_ray, device=device)
+        summary_writer.add_scalar('test/psnr_all', np.mean(PSNRs_test),
+                                  global_step=iteration)
+        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} '
+              f'<========================')
 
     if args.render_path:
         c2ws = test_dataset.render_path

@@ -36,9 +36,9 @@ def SHRender(xyz_sampled, viewdirs, features):
 
 
 def RGBRender(xyz_sampled, viewdirs, features):
-
     rgb = features
     return rgb
+
 
 class AlphaGridMask(torch.nn.Module):
     def __init__(self, device, aabb, alpha_volume):
@@ -66,17 +66,24 @@ class MLPRender_Fea(torch.nn.Module):
         super(MLPRender_Fea, self).__init__()
 
         self.in_mlpC = 2*viewpe*3 + 2*feape*inChanel + 3 + inChanel
+        # self.pospe = 4
+        # self.in_mlpC = 3 * ((1 + 2*viewpe) + (1+ 2*self.pospe)) \
+        #              + inChanel * (1 + 2*feape)
         self.viewpe = viewpe
         self.feape = feape
         layer1 = torch.nn.Linear(self.in_mlpC, featureC)
         layer2 = torch.nn.Linear(featureC, featureC)
-        layer3 = torch.nn.Linear(featureC,3)
+        layer3 = torch.nn.Linear(featureC, 3)
 
-        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True), layer2, torch.nn.ReLU(inplace=True), layer3)
+        self.mlp = torch.nn.Sequential(layer1, torch.nn.ReLU(inplace=True),
+                                       layer2, torch.nn.ReLU(inplace=True),
+                                       layer3)
         torch.nn.init.constant_(self.mlp[-1].bias, 0)
 
     def forward(self, pts, viewdirs, features):
-        indata = [features, viewdirs]
+        indata = [features, viewdirs] # , pts]
+        # if self.pospe > 0:
+        #     indata += [positional_encoding(pts, self.pospe)]
         if self.feape > 0:
             indata += [positional_encoding(features, self.feape)]
         if self.viewpe > 0:
@@ -87,11 +94,12 @@ class MLPRender_Fea(torch.nn.Module):
 
         return rgb
 
+
 class MLPRender_PE(torch.nn.Module):
     def __init__(self,inChanel, viewpe=6, pospe=6, featureC=128):
         super(MLPRender_PE, self).__init__()
 
-        self.in_mlpC = (3+2*viewpe*3)+ (3+2*pospe*3)  + inChanel #
+        # self.in_mlpC = (3+2*viewpe*3)+ (3+2*pospe*3)  + inChanel #
         self.viewpe = viewpe
         self.pospe = pospe
         layer1 = torch.nn.Linear(self.in_mlpC, featureC)
@@ -112,6 +120,7 @@ class MLPRender_PE(torch.nn.Module):
         rgb = torch.sigmoid(rgb)
 
         return rgb
+
 
 class MLPRender(torch.nn.Module):
     def __init__(self,inChanel, viewpe=6, featureC=128):
@@ -134,17 +143,18 @@ class MLPRender(torch.nn.Module):
         mlp_in = torch.cat(indata, dim=-1)
         rgb = self.mlp(mlp_in)
         rgb = torch.sigmoid(rgb)
-
         return rgb
 
 
-
 class TensorBase(torch.nn.Module):
-    def __init__(self, aabb, gridSize, device, density_n_comp = 8, appearance_n_comp = 24, app_dim = 27,
-                    shadingMode = 'MLP_PE', alphaMask = None, near_far=[2.0,6.0],
-                    density_shift = -10, alphaMask_thres=0.001, distance_scale=25, rayMarch_weight_thres=0.0001,
-                    pos_pe = 6, view_pe = 6, fea_pe = 6, featureC=128, step_ratio=2.0,
-                    fea2denseAct = 'softplus', grid_bit=32):
+    def __init__(self, aabb, gridSize, device, density_n_comp=8,
+                 appearance_n_comp=24, app_dim=27,
+                 shadingMode='MLP_PE',
+                 alphaMask=None, near_far=[2.0, 6.0], density_shift=-10,
+                 alphaMask_thres=0.001, distance_scale=25,
+                 rayMarch_weight_thres=0.0001, pos_pe=6, view_pe=6, fea_pe=6,
+                 featureC=128, step_ratio=2.0, fea2denseAct='softplus',
+                 grid_bit=32):
         super(TensorBase, self).__init__()
 
         self.density_n_comp = density_n_comp
@@ -162,7 +172,6 @@ class TensorBase(torch.nn.Module):
 
         self.near_far = near_far
         self.step_ratio = step_ratio
-
 
         self.update_stepSize(gridSize)
 
@@ -204,7 +213,7 @@ class TensorBase(torch.nn.Module):
         self.units=self.aabbSize / (self.gridSize-1)
         self.stepSize=torch.mean(self.units)*self.step_ratio
         self.aabbDiag = torch.sqrt(torch.sum(torch.square(self.aabbSize)))
-        self.nSamples=int((self.aabbDiag / self.stepSize).item()) + 1
+        self.nSamples = int((self.aabbDiag / self.stepSize).item()) + 1
         print("sampling step size: ", self.stepSize)
         print("sampling number: ", self.nSamples)
 
@@ -269,7 +278,6 @@ class TensorBase(torch.nn.Module):
             self.alphaMask = AlphaGridMask(self.device, ckpt['alphaMask.aabb'].to(self.device), alpha_volume.float().to(self.device))
         self.load_state_dict(ckpt['state_dict'])
 
-
     def sample_ray_ndc(self, rays_o, rays_d, is_train=True, N_samples=-1):
         N_samples = N_samples if N_samples > 0 else self.nSamples
         near, far = self.near_far
@@ -307,7 +315,6 @@ class TensorBase(torch.nn.Module):
         mask_outbbox = ((self.aabb[0]>rays_pts) | (rays_pts>self.aabb[1])).any(dim=-1)
 
         return rays_pts, interpx, ~mask_outbbox
-
 
     def shrink(self, new_aabb, voxel_size):
         pass
@@ -468,7 +475,6 @@ class TensorBase(torch.nn.Module):
         if white_bg or (is_train and torch.rand((1,))<0.5):
             rgb_map = rgb_map + (1. - acc_map[..., None])
 
-        
         rgb_map = rgb_map.clamp(0,1)
 
         with torch.no_grad():
