@@ -137,6 +137,14 @@ class TensorVMSplit(TensorBase):
             plane = min_max_quantize(self.app_plane[idx], self.grid_bit)
             line = min_max_quantize(self.app_line[idx], self.grid_bit)
 
+            if self.use_mask:
+                mask = torch.sigmoid(self.app_plane_mask[idx])
+                plane = (plane * (mask >= 0.5) - plane * mask).detach() \
+                      + plane * mask
+                mask = torch.sigmoid(self.app_line_mask[idx])
+                line = (line * (mask >= 0.5) - line * mask).detach() \
+                     + line * mask
+
             if self.use_dwt:
                 plane = inverse(plane, self.dwt_level)
 
