@@ -12,7 +12,8 @@ CUDA_VISIBLE_DEVICES=3 python compress.py \
     --ckpt=log/lego/weak_model_lego.th \
     --compress=1 \
     --decompress=1 \
-    --decompress_and_validate=1
+    --decompress_and_validate=1 \
+    --N_vis=-1
 
 # # strong-model (chair; 1e-10)
 # CUDA_VISIBLE_DEVICES=3 python compress.py \
@@ -26,4 +27,5 @@ CUDA_VISIBLE_DEVICES=3 python compress.py \
 #     --ckpt=log/chair/strong_model_chair.th \
 #     --compress=1 \
 #     --decompress=1 \
-#     --decompress_and_validate=1
+#     --decompress_and_validate=1 \
+#     --N_vis=-1
