@@ -29,6 +29,35 @@ class TensorVMSplit(TensorBase):
         if use_mask:
             self.init_mask()
 
+    def get_kwargs(self):
+        return {
+            'aabb': self.aabb,
+            'gridSize':self.gridSize.tolist(),
+            'density_n_comp': self.density_n_comp,
+            'appearance_n_comp': self.app_n_comp,
+            'app_dim': self.app_dim,
+
+            'density_shift': self.density_shift,
+            'alphaMask_thres': self.alphaMask_thres,
+            'distance_scale': self.distance_scale,
+            'rayMarch_weight_thres': self.rayMarch_weight_thres,
+            'fea2denseAct': self.fea2denseAct,
+
+            'near_far': self.near_far,
+            'step_ratio': self.step_ratio,
+
+            'shadingMode': self.shadingMode,
+            'pos_pe': self.pos_pe,
+            'view_pe': self.view_pe,
+            'fea_pe': self.fea_pe,
+            'featureC': self.featureC,
+
+            'grid_bit': self.grid_bit,
+            'use_mask': self.use_mask,
+            'use_dwt': self.use_dwt,
+            'dwt_level': self.dwt_level
+        }
+
     def init_svd_volume(self, res, device):
         self.density_plane, self.density_line = self.init_one_svd(
             self.density_n_comp, self.gridSize, 0.1, device)
