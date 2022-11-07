@@ -78,6 +78,11 @@ def config_parser(cmd=None):
     parser.add_argument("--use_dwt", action='store_true')
     parser.add_argument("--dwt_level", type=int, default=2)
 
+    # encoding option
+    parser.add_argument("--compress", type=int, default=0)
+    parser.add_argument("--decompress", type=int, default=0)
+    parser.add_argument("--decompress_and_validate", type=int, default=1)
+
     # network decoder
     parser.add_argument("--shadingMode", type=str, default="MLP_PE",
                         help='which shading mode to use')
