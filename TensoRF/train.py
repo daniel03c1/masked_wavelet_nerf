@@ -57,13 +57,6 @@ def export_mesh(args):
 
 @torch.no_grad()
 def render_test(args):
-    # init dataset
-    dataset = dataset_dict[args.dataset_name]
-    test_dataset = dataset(args.datadir, split='test',
-                           downsample=args.downsample_train, is_stack=True)
-    white_bg = test_dataset.white_bg
-    ndc_ray = args.ndc_ray
-
     if not os.path.exists(args.ckpt):
         print('the ckpt path does not exists!!')
         return
@@ -73,6 +66,13 @@ def render_test(args):
     kwargs.update({'device': device})
     tensorf = eval(args.model_name)(**kwargs)
     tensorf.load(ckpt)
+
+    # init dataset
+    dataset = dataset_dict[args.dataset_name]
+    test_dataset = dataset(args.datadir, split='test',
+                           downsample=args.downsample_train, is_stack=True)
+    white_bg = test_dataset.white_bg
+    ndc_ray = args.ndc_ray
 
     logfolder = os.path.dirname(args.ckpt)
     if args.render_train:
@@ -85,8 +85,8 @@ def render_test(args):
     if args.render_test:
         os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
         PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
-        print(f'======> {args.expname} train all psnr: {np.mean(PSNRs_test)} <========================')
+                                N_vis=1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+        print(f'======> {args.expname} test all psnr: {np.mean(PSNRs_test)} <========================')
 
     if args.render_path:
         c2ws = test_dataset.render_path

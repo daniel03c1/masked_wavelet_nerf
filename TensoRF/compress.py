@@ -73,7 +73,6 @@ def compress_method1(args, device): # save grid + mask
 
     # update kwargs
     kwargs = ckpt['kwargs']
-
     kwargs.update({'device': device})
     kwargs.update({'use_mask': args.use_mask})
     kwargs.update({'use_dwt': args.use_dwt})
