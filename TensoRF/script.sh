@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# weak-model
+# weak-model (lego; 1e-11)
 CUDA_VISIBLE_DEVICES=3 python compress.py \
     --config=configs/chair.txt \
     --use_mask \
@@ -9,7 +9,21 @@ CUDA_VISIBLE_DEVICES=3 python compress.py \
     --use_dwt \
     --dwt_level=1 \
     --datadir=/workspace/dataset/nerf_synthetic/lego \
-    --ckpt=log/tensorf_lego_VM/gb8_um1_mw1e-11_ud1_dl1/tensorf_lego_VM.th \
+    --ckpt=log/lego/weak_model_lego.th \
     --compress=1 \
     --decompress=1 \
     --decompress_and_validate=1
+
+# # strong-model (chair; 1e-10)
+# CUDA_VISIBLE_DEVICES=3 python compress.py \
+#     --config=configs/chair.txt \
+#     --use_mask \
+#     --mask_weight=1e-10 \
+#     --grid_bit=8 \
+#     --use_dwt \
+#     --dwt_level=1 \
+#     --datadir=/workspace/dataset/nerf_synthetic/chair \
+#     --ckpt=log/chair/strong_model_chair.th \
+#     --compress=1 \
+#     --decompress=1 \
+#     --decompress_and_validate=1
