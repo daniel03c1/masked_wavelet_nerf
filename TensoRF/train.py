@@ -146,7 +146,7 @@ def reconstruction(args):
             fea2denseAct=args.fea2denseAct,
             grid_bit=args.grid_bit,
             use_mask=args.use_mask,
-            use_dwt=args.use_dwt, dwt_level=args.dwt_level)
+            use_dwt=args.use_dwt, dwt_level=args.dwt_level, alpha_offset=args.alpha_offset)
 
     # print(tensorf)
     print(f'{sum([p.numel() for p in tensorf.parameters()])*32/8_388_608}MB')
@@ -261,6 +261,13 @@ def reconstruction(args):
                 # update volume resolution
                 reso_mask = reso_cur
 
+            if args.alpha_offset > 0:
+                if iteration != update_AlphaMask_list[0]:
+                    tensorf.alphaMask = None
+
+                if iteration == update_AlphaMask_list[3]:
+                    tensorf.alpha_offset = 0
+
             new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
 
             if iteration == update_AlphaMask_list[0]:
@@ -321,6 +328,13 @@ def reconstruction(args):
         print(f'masked_total: {(grid_bytes + non_grid_bytes)/1_048_576:.3f}MB '
                 f'(G ({args.grid_bit}bit): {grid_bytes/1_048_576:.3f}MB) '
                 f'(N: {non_grid_bytes/1_048_576:3f}MB)')
+
+        # Alpha mask reconstruction
+        _, _, Z, Y, X = tensorf.alphaMask.alpha_volume.shape
+        tensorf.alphaMask = None
+        tensorf.alpha_offset = 0
+        tensorf.updateAlphaMask((X,Y,Z)) 
+    
 
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)

@@ -154,7 +154,7 @@ class TensorBase(torch.nn.Module):
                  alphaMask_thres=0.001, distance_scale=25,
                  rayMarch_weight_thres=0.0001, pos_pe=6, view_pe=6, fea_pe=6,
                  featureC=128, step_ratio=2.0, fea2denseAct='softplus',
-                 grid_bit=32):
+                 grid_bit=32, alpha_offset = 0):
         super(TensorBase, self).__init__()
 
         self.density_n_comp = density_n_comp
@@ -165,7 +165,8 @@ class TensorBase(torch.nn.Module):
         self.device=device
 
         self.density_shift = density_shift
-        self.alphaMask_thres = alphaMask_thres
+        self.alphaMask_thres = alphaMask_thres - alpha_offset
+        self.alpha_offset = alpha_offset
         self.distance_scale = distance_scale
         self.rayMarch_weight_thres = rayMarch_weight_thres
         self.fea2denseAct = fea2denseAct
@@ -345,6 +346,7 @@ class TensorBase(torch.nn.Module):
         alpha = alpha.clamp(0,1).transpose(0,2).contiguous()[None,None]
         total_voxels = gridSize[0] * gridSize[1] * gridSize[2]
 
+        self.alphaMask_thres += self.alpha_offset
         ks = 3
         alpha = F.max_pool3d(alpha, kernel_size=ks, padding=ks // 2, stride=1).view(gridSize[::-1])
         alpha[alpha>=self.alphaMask_thres] = 1
