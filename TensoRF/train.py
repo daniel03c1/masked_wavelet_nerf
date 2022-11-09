@@ -9,6 +9,7 @@ from dataLoader import dataset_dict
 from opt import config_parser
 from renderer import *
 from utils import *
+from models.tensoRF import min_max_quantize
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -301,14 +302,22 @@ def reconstruction(args):
             optimizer = torch.optim.Adam(grad_vars, betas=(0.9, 0.99),
                                          weight_decay=args.weight_decay)
 
-        if iteration + 1 in [500, 1000, 2500, 5000, 10000, 20000]:
-            print()
-        
-    tensorf.save(f'{logfolder}/{args.expname}.th')
+    if args.use_mask:
+        with torch.no_grad():
+            for i in range(3):
+                tensorf.density_plane[i].set_(min_max_quantize(tensorf.density_plane[i], args.grid_bit) * (tensorf.density_plane_mask[i] >= 0))
+                tensorf.density_line[i].set_(min_max_quantize(tensorf.density_line[i], args.grid_bit) * (tensorf.density_line_mask[i] >= 0))
+                tensorf.app_plane[i].set_(min_max_quantize(tensorf.app_plane[i], args.grid_bit) * (tensorf.app_plane_mask[i] >= 0))
+                tensorf.app_line[i].set_(min_max_quantize(tensorf.app_line[i], args.grid_bit) * (tensorf.app_line_mask[i] >= 0))
+
+        tensorf.use_mask = False
+
+        del tensorf.density_plane_mask
+        del tensorf.density_line_mask
+        del tensorf.app_plane_mask
+        del tensorf.app_line_mask
 
     grid, non_grid = tensorf_param_count(tensorf)
-    if args.use_mask:
-        grid = grid / 2 # dont count masks
     grid_bytes = grid * args.grid_bit / 8
     non_grid_bytes = non_grid * 4
     print(f'total: {(grid_bytes + non_grid_bytes)/1_048_576:.3f}MB '
@@ -316,25 +325,27 @@ def reconstruction(args):
             f'(N: {non_grid_bytes/1_048_576:3f}MB)')
 
     if args.use_mask:
-        flat_mask = torch.cat([torch.cat([p[0].flatten(), p[1].flatten(),
-                                          p[2].flatten()])
-                               for p in [tensorf.density_plane_mask,
-                                         tensorf.density_line_mask,
-                                         tensorf.app_plane_mask,
-                                         tensorf.app_line_mask]])
-        ratio = (flat_mask >= 0).float().mean()
+        flat_mask = torch.cat([torch.cat([min_max_quantize(p[0].flatten(), args.grid_bit),
+                                          min_max_quantize(p[1].flatten(), args.grid_bit),
+                                          min_max_quantize(p[2].flatten(), args.grid_bit)])
+                               for p in [tensorf.density_plane,
+                                         tensorf.density_line,
+                                         tensorf.app_plane,
+                                         tensorf.app_line]])
+        ratio = (flat_mask != 0).float().mean()
         print(f'non-masked ratio: {ratio:.4f}')
         grid_bytes = grid_bytes * ratio
         print(f'masked_total: {(grid_bytes + non_grid_bytes)/1_048_576:.3f}MB '
                 f'(G ({args.grid_bit}bit): {grid_bytes/1_048_576:.3f}MB) '
                 f'(N: {non_grid_bytes/1_048_576:3f}MB)')
 
-        # Alpha mask reconstruction
-        _, _, Z, Y, X = tensorf.alphaMask.alpha_volume.shape
-        tensorf.alphaMask = None
-        tensorf.alpha_offset = 0
-        tensorf.updateAlphaMask((X,Y,Z)) 
-    
+    # Alpha mask reconstruction
+    _, _, Z, Y, X = tensorf.alphaMask.alpha_volume.shape
+    tensorf.alphaMask = None
+    tensorf.alpha_offset = 0
+    tensorf.updateAlphaMask((X,Y,Z))
+
+    tensorf.save(f'{logfolder}/{args.expname}.th')
 
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)

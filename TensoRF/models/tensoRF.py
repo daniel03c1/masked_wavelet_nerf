@@ -12,7 +12,7 @@ def min_max_quantize(inputs, bits):
 
     scale = torch.amax(torch.abs(inputs)).clamp(min=1e-6)
     n = float(2**(bits-1) - 1)
-    out = torch.floor(torch.abs(inputs / scale) * n) / n * scale
+    out = torch.round(torch.abs(inputs / scale) * n) / n * scale
     rounded = out * torch.sign(inputs)
 
     return (rounded - inputs).detach() + inputs
