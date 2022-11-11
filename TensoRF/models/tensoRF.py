@@ -20,11 +20,13 @@ def min_max_quantize(inputs, bits):
 
 class TensorVMSplit(TensorBase):
     def __init__(self, aabb, gridSize, device,
-                 use_mask=False, use_dwt=False, dwt_level=2, **kargs):
+                 use_mask=False, use_dwt=False, dwt_level=2,
+                 trans_func='bior4.4', **kargs):
         super(TensorVMSplit, self).__init__(aabb, gridSize, device, **kargs)
         self.use_mask = use_mask
         self.use_dwt = use_dwt
         self.dwt_level = dwt_level
+        self.trans_func = trans_func
 
         if use_mask:
             self.init_mask()
@@ -55,7 +57,8 @@ class TensorVMSplit(TensorBase):
             'grid_bit': self.grid_bit,
             'use_mask': self.use_mask,
             'use_dwt': self.use_dwt,
-            'dwt_level': self.dwt_level
+            'dwt_level': self.dwt_level,
+            'trans_func': self.trans_func,
         }
 
     def init_svd_volume(self, res, device):
@@ -137,7 +140,7 @@ class TensorVMSplit(TensorBase):
                      + line * mask
 
             if self.use_dwt:
-                plane = inverse(plane, self.dwt_level)
+                plane = inverse(plane, self.dwt_level, self.trans_func)
 
             plane_coef_point = F.grid_sample(
                 plane, coordinate_plane[[idx]],
@@ -173,7 +176,7 @@ class TensorVMSplit(TensorBase):
                      + line * mask
 
             if self.use_dwt:
-                plane = inverse(plane, self.dwt_level)
+                plane = inverse(plane, self.dwt_level, self.trans_func)
 
             plane_coef_point.append(F.grid_sample(
                 plane, coordinate_plane[[idx]],
@@ -211,7 +214,7 @@ class TensorVMSplit(TensorBase):
             mat_id_0, mat_id_1 = self.matMode[i]
 
             if self.use_dwt:
-                plane_coef[i].set_(inverse(plane_coef[i], self.dwt_level))
+                plane_coef[i].set_(inverse(plane_coef[i], self.dwt_level, self.trans_func))
 
             plane_coef[i] = nn.Parameter(
                 F.interpolate(plane_coef[i].data,
@@ -222,7 +225,7 @@ class TensorVMSplit(TensorBase):
                 mode='bilinear', align_corners=True))
 
             if self.use_dwt:
-                plane_coef[i].set_(forward(plane_coef[i], self.dwt_level))
+                plane_coef[i].set_(forward(plane_coef[i], self.dwt_level, self.trans_func))
 
         return plane_coef, line_coef
 
@@ -250,9 +253,9 @@ class TensorVMSplit(TensorBase):
             mode0, mode1 = self.matMode[i]
             if self.use_dwt:
                 self.density_plane[i].set_(inverse(self.density_plane[i],
-                                                   self.dwt_level))
+                                                   self.dwt_level, self.trans_func))
                 self.app_plane[i].set_(inverse(self.app_plane[i],
-                                               self.dwt_level))
+                                               self.dwt_level, self.trans_func))
 
             steps = (new_aabb[1][mode0]-new_aabb[0][mode0]) / self.units[mode0]
             steps = int(steps / unit) * unit
@@ -272,9 +275,9 @@ class TensorVMSplit(TensorBase):
 
             if self.use_dwt:
                 self.density_plane[i].set_(forward(self.density_plane[i],
-                                                   self.dwt_level))
+                                                   self.dwt_level, self.trans_func))
                 self.app_plane[i].set_(forward(self.app_plane[i],
-                                               self.dwt_level))
+                                               self.dwt_level, self.trans_func))
 
         self.aabb = new_aabb
         self.update_stepSize(

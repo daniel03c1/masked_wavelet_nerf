@@ -77,9 +77,10 @@ def config_parser(cmd=None):
     parser.add_argument("--mask_weight", type=float, default=0)
     parser.add_argument("--use_dwt", action='store_true')
     parser.add_argument("--dwt_level", type=int, default=2)
+    parser.add_argument("--trans_func", type=str, default='bior4.4')
 
     # Alpha mask
-    parser.add_argument("--alpha_offset", type=float, default=0.0,
+    parser.add_argument("--alpha_offset", type=float, default=1e-4,
                         help='add to alphamask threshold')
 
     # encoding option
@@ -140,6 +141,7 @@ def config_parser(cmd=None):
                         help='N images to vis')
     parser.add_argument("--vis_every", type=int, default=10000,
                         help='frequency of visualize the image')
+
     if cmd is not None:
         return parser.parse_args(cmd)
     else:
