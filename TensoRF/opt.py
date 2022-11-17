@@ -21,7 +21,7 @@ def config_parser(cmd=None):
     parser.add_argument('--downsample_test', type=float, default=1.0)
 
     parser.add_argument('--model_name', type=str, default='TensorVMSplit',
-                        choices=['TensorVMSplit', 'TensorCP'])
+                        choices=['TensorVMSplit', 'TensorCP', 'TriPlane'])
 
     # loader options
     parser.add_argument("--batch_size", type=int, default=4096)

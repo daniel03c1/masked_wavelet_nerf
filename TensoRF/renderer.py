@@ -6,7 +6,7 @@ from tqdm.auto import tqdm
 
 from dataLoader.ray_utils import get_rays
 from dataLoader.ray_utils import ndc_rays_blender
-from models.tensoRF import TensorCP, raw2alpha, TensorVMSplit, AlphaGridMask
+from models.tensoRF import TensorCP, raw2alpha, TensorVMSplit, AlphaGridMask, TriPlane
 from utils import *
 
 

@@ -75,6 +75,11 @@ def render_test(args):
     tensorf = eval(args.model_name)(**kwargs)
     tensorf.load(ckpt)
 
+    _, _, Z, Y, X = tensorf.alphaMask.alpha_volume.shape
+    tensorf.alphaMask = None
+    tensorf.alpha_offset = 0
+    tensorf.updateAlphaMask((X,Y,Z))
+
     logfolder = os.path.dirname(args.ckpt)
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
@@ -85,8 +90,9 @@ def render_test(args):
 
     if args.render_test:
         os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
-        evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
+        PSNRs_test = evaluation(test_dataset,tensorf, args, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
                                 N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+        print(f'======> {args.expname} train all psnr: {np.mean(PSNRs_test)} <========================')
 
     if args.render_path:
         c2ws = test_dataset.render_path
@@ -222,10 +228,11 @@ def reconstruction(args):
             mask_loss = sum([p.sum()
                              for p in tensorf.density_plane_mask.parameters()])\
                       + sum([p.sum()
+                             for p in tensorf.app_plane_mask.parameters()])
+            if hasattr(tensorf, "density_line_mask"):
+                mask_loss += sum([p.sum()
                              for p in tensorf.density_line_mask.parameters()])\
-                      + sum([p.sum()
-                             for p in tensorf.app_plane_mask.parameters()])\
-                      + sum([p.sum()
+                            + sum([p.sum()
                              for p in tensorf.app_line_mask.parameters()])
             total_loss = total_loss + args.mask_weight * mask_loss
 
@@ -306,16 +313,18 @@ def reconstruction(args):
         with torch.no_grad():
             for i in range(3):
                 tensorf.density_plane[i].set_(min_max_quantize(tensorf.density_plane[i], args.grid_bit) * (tensorf.density_plane_mask[i] >= 0))
-                tensorf.density_line[i].set_(min_max_quantize(tensorf.density_line[i], args.grid_bit) * (tensorf.density_line_mask[i] >= 0))
                 tensorf.app_plane[i].set_(min_max_quantize(tensorf.app_plane[i], args.grid_bit) * (tensorf.app_plane_mask[i] >= 0))
-                tensorf.app_line[i].set_(min_max_quantize(tensorf.app_line[i], args.grid_bit) * (tensorf.app_line_mask[i] >= 0))
+                if hasattr(tensorf, "density_line_mask"):
+                    tensorf.density_line[i].set_(min_max_quantize(tensorf.density_line[i], args.grid_bit) * (tensorf.density_line_mask[i] >= 0))
+                    tensorf.app_line[i].set_(min_max_quantize(tensorf.app_line[i], args.grid_bit) * (tensorf.app_line_mask[i] >= 0))
 
         tensorf.use_mask = False
 
         del tensorf.density_plane_mask
-        del tensorf.density_line_mask
         del tensorf.app_plane_mask
-        del tensorf.app_line_mask
+        if hasattr(tensorf, "density_line_mask"):
+            del tensorf.density_line_mask
+            del tensorf.app_line_mask
 
     grid, non_grid = tensorf_param_count(tensorf)
     grid_bytes = grid * args.grid_bit / 8
@@ -325,13 +334,21 @@ def reconstruction(args):
             f'(N: {non_grid_bytes/1_048_576:3f}MB)')
 
     if args.use_mask:
-        flat_mask = torch.cat([torch.cat([min_max_quantize(p[0].flatten(), args.grid_bit),
-                                          min_max_quantize(p[1].flatten(), args.grid_bit),
-                                          min_max_quantize(p[2].flatten(), args.grid_bit)])
-                               for p in [tensorf.density_plane,
-                                         tensorf.density_line,
-                                         tensorf.app_plane,
-                                         tensorf.app_line]])
+        if hasattr(tensorf, "density_line"):
+            flat_mask = torch.cat([torch.cat([min_max_quantize(p[0].flatten(), args.grid_bit),
+                                            min_max_quantize(p[1].flatten(), args.grid_bit),
+                                            min_max_quantize(p[2].flatten(), args.grid_bit)])
+                                for p in [tensorf.density_plane,
+                                            tensorf.density_line,
+                                            tensorf.app_plane,
+                                            tensorf.app_line]])
+        else:
+            flat_mask = torch.cat([torch.cat([min_max_quantize(p[0].flatten(), args.grid_bit),
+                                            min_max_quantize(p[1].flatten(), args.grid_bit),
+                                            min_max_quantize(p[2].flatten(), args.grid_bit)])
+                                for p in [tensorf.density_plane,
+                                            tensorf.app_plane]])
+
         ratio = (flat_mask != 0).float().mean()
         print(f'non-masked ratio: {ratio:.4f}')
         grid_bytes = grid_bytes * ratio
@@ -339,13 +356,13 @@ def reconstruction(args):
                 f'(G ({args.grid_bit}bit): {grid_bytes/1_048_576:.3f}MB) '
                 f'(N: {non_grid_bytes/1_048_576:3f}MB)')
 
+    tensorf.save(f'{logfolder}/{args.expname}.th')
     # Alpha mask reconstruction
     _, _, Z, Y, X = tensorf.alphaMask.alpha_volume.shape
     tensorf.alphaMask = None
     tensorf.alpha_offset = 0
     tensorf.updateAlphaMask((X,Y,Z))
 
-    tensorf.save(f'{logfolder}/{args.expname}.th')
 
     if args.render_train:
         os.makedirs(f'{logfolder}/imgs_train_all', exist_ok=True)
@@ -395,4 +412,4 @@ if __name__ == '__main__':
         render_test(args)
     else:
         reconstruction(args)
-
+        
