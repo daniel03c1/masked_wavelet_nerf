@@ -1,69 +1,98 @@
+import cv2,torch
 import numpy as np
-import plyfile
-import scipy.signal
-import skimage.measure
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.transforms as T
 from PIL import Image
+import torchvision.transforms as T
+import torch.nn.functional as F
+import scipy.signal
+
+mse2psnr = lambda x : -10. * torch.log(x) / torch.log(torch.Tensor([10.]))
 
 
-def get_cos_warmup_scheduler(optimizer, total_epoch, warmup_epoch,
-                             min_ratio=0.):
-    def lr_lambda(epoch):
-        if epoch < warmup_epoch:
-            return (epoch + 1) / (warmup_epoch + 1)
-        ratio = (1 + np.cos(np.math.pi * (epoch - warmup_epoch)
-                            / (total_epoch - warmup_epoch))) / 2
-        return min_ratio + (1-min_ratio) * ratio
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+def visualize_depth_numpy(depth, minmax=None, cmap=cv2.COLORMAP_JET):
+    """
+    depth: (H, W)
+    """
 
+    x = np.nan_to_num(depth) # change nan to 0
+    if minmax is None:
+        mi = np.min(x[x>0]) # get minimum positive depth (ignore background)
+        ma = np.max(x)
+    else:
+        mi,ma = minmax
 
-def mse2psnr(x):
-    return -10. * torch.log10(x.clamp(min=1e-10))
-
-
-def mse2psnr_np(x):
-    return -10 * np.log10(max(x, 1e-10))
-
+    x = (x-mi)/(ma-mi+1e-8) # normalize to 0~1
+    x = (255*x).astype(np.uint8)
+    x_ = cv2.applyColorMap(x, cmap)
+    return x_, [mi,ma]
 
 def init_log(log, keys):
     for key in keys:
         log[key] = torch.tensor([0.0], dtype=float)
     return log
 
+def visualize_depth(depth, minmax=None, cmap=cv2.COLORMAP_JET):
+    """
+    depth: (H, W)
+    """
+    if type(depth) is not np.ndarray:
+        depth = depth.cpu().numpy()
 
-def remeasure_bbox(density_net, bbox, resolution=256, kernel_size=3,
-                   alpha_threshold=1/255):
-    device = bbox.device
+    x = np.nan_to_num(depth) # change nan to 0
+    if minmax is None:
+        mi = np.min(x[x>0]) # get minimum positive depth (ignore background)
+        ma = np.max(x)
+    else:
+        mi,ma = minmax
 
-    bbox_min = bbox.amin(0)
-    bbox_max = bbox.amax(0)
-
-    grid = torch.stack(torch.meshgrid(
-        torch.linspace(bbox_min[0], bbox_max[0], resolution, device=device),
-        torch.linspace(bbox_min[1], bbox_max[1], resolution, device=device),
-        torch.linspace(bbox_min[2], bbox_max[2], resolution, device=device)),
-    -1)
-
-    step = (bbox[1] - bbox[0]).amin() / resolution
-    alpha = 1 - torch.exp(-density_net(grid.reshape(-1, 3)).clamp(min=0)
-                          * step).reshape(*grid.shape[:-1])
-    alpha = F.max_pool3d(alpha.reshape(1, 1, *alpha.shape), kernel_size,
-                         stride=1, padding=kernel_size//2)
-    indices = torch.nonzero(alpha[0, 0] > alpha_threshold)
-
-    if indices.size(0) > 0:
-        bbox = torch.stack([indices.amin(0), indices.amax(0)]) / (resolution-1)
-        bbox = bbox_min + (bbox_max - bbox_min) * bbox
-
-    return bbox
+    x = (x-mi)/(ma-mi+1e-8) # normalize to 0~1
+    x = (255*x).astype(np.uint8)
+    x_ = Image.fromarray(cv2.applyColorMap(x, cmap))
+    x_ = T.ToTensor()(x_)  # (3, H, W)
+    return x_, [mi,ma]
 
 
-''' Evaluation metrics (ssim, lpips) '''
-def rgb_ssim(img0, img1, max_val, filter_size=11, filter_sigma=1.5,
-             k1=0.01, k2=0.03, return_map=False):
+def N_to_reso(n_voxels, bbox, unit=16):
+    xyz_min, xyz_max = bbox
+    dim = len(xyz_min)
+    voxel_size = ((xyz_max - xyz_min).prod() / n_voxels).pow(1 / dim)
+    return (((xyz_max - xyz_min) / voxel_size / unit).long() * unit).tolist()
+
+
+def cal_n_samples(reso, step_ratio=0.5):
+    return int(np.linalg.norm(reso)/step_ratio)
+
+
+__LPIPS__ = {}
+def init_lpips(net_name, device):
+    assert net_name in ['alex', 'vgg']
+    import lpips
+    print(f'init_lpips: lpips_{net_name}')
+    return lpips.LPIPS(net=net_name, version='0.1').eval().to(device)
+
+
+def rgb_lpips(np_gt, np_im, net_name, device):
+    if net_name not in __LPIPS__:
+        __LPIPS__[net_name] = init_lpips(net_name, device)
+    gt = torch.from_numpy(np_gt).permute([2, 0, 1]).contiguous().to(device)
+    im = torch.from_numpy(np_im).permute([2, 0, 1]).contiguous().to(device)
+    return __LPIPS__[net_name](gt, im, normalize=True).item()
+
+
+def findItem(items, target):
+    for one in items:
+        if one[:len(target)]==target:
+            return one
+    return None
+
+
+''' Evaluation metrics (ssim, lpips)
+'''
+def rgb_ssim(img0, img1, max_val,
+             filter_size=11,
+             filter_sigma=1.5,
+             k1=0.01,
+             k2=0.03,
+             return_map=False):
     # Modified from https://github.com/google/mipnerf/blob/16e73dfdb52044dcceb47cda5243a686391a6e0f/internal/math.py#L58
     assert len(img0.shape) == 3
     assert img0.shape[-1] == 3
@@ -107,8 +136,37 @@ def rgb_ssim(img0, img1, max_val, filter_size=11, filter_sigma=1.5,
     return ssim_map if return_map else ssim
 
 
-def convert_sdf_samples_to_ply(pytorch_3d_sdf_tensor, ply_filename_out, bbox,
-                               level=0.5, offset=None, scale=None):
+import torch.nn as nn
+class TVLoss(nn.Module):
+    def __init__(self,TVLoss_weight=1):
+        super(TVLoss,self).__init__()
+        self.TVLoss_weight = TVLoss_weight
+
+    def forward(self,x):
+        batch_size = x.size()[0]
+        h_x = x.size()[2]
+        w_x = x.size()[3]
+        count_h = self._tensor_size(x[:,:,1:,:])
+        count_w = self._tensor_size(x[:,:,:,1:])
+        h_tv = torch.pow((x[:,:,1:,:]-x[:,:,:h_x-1,:]),2).sum()
+        w_tv = torch.pow((x[:,:,:,1:]-x[:,:,:,:w_x-1]),2).sum()
+        return self.TVLoss_weight*2*(h_tv/count_h+w_tv/count_w)/batch_size
+
+    def _tensor_size(self,t):
+        return t.size()[1]*t.size()[2]*t.size()[3]
+
+
+
+import plyfile
+import skimage.measure
+def convert_sdf_samples_to_ply(
+    pytorch_3d_sdf_tensor,
+    ply_filename_out,
+    bbox,
+    level=0.5,
+    offset=None,
+    scale=None,
+):
     """
     Convert sdf samples to .ply
 
@@ -142,6 +200,7 @@ def convert_sdf_samples_to_ply(pytorch_3d_sdf_tensor, ply_filename_out, bbox,
         mesh_points = mesh_points - offset
 
     # try writing to the ply file
+
     num_verts = verts.shape[0]
     num_faces = faces.shape[0]
 

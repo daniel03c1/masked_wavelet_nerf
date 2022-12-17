@@ -192,7 +192,9 @@ def ray_marcher(rays,
         rays: ()
 
     Returns:
+
     """
+
     # Decompose the inputs
     N_rays = rays.shape[0]
     rays_o, rays_d = rays[:, 0:3], rays[:, 3:6]  # both (N_rays, 3)
@@ -271,4 +273,3 @@ def ndc_bbox(all_rays):
     far_max = torch.max((all_rays[...,:3]+all_rays[...,3:6]).view(-1, 3), dim=0)[0]
     print(f'===> ndc bbox near_min:{near_min} near_max:{near_max} far_min:{far_min} far_max:{far_max}')
     return torch.stack((torch.minimum(near_min,far_min),torch.maximum(near_max,far_max)))
-
