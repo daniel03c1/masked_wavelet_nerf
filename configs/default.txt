@@ -1,5 +1,5 @@
 dataset_name = blender
-# datadir = ../../nerf_synthetic/chair
+datadir = ../nerf_synthetic/chair
 expname =  tensorf_lego_VM
 basedir = ./log
 
