@@ -1,6 +1,7 @@
 # Masked Wavelet Representation for Compact Neural Radiance Fields
 Daniel Rho*, Byeonghyeon Lee*, Seungtae Nam, Joo Chan Lee, Jong Hwan Ko†, and Eunbyung Park†
 
+Our code is based on NAS-BOWL (https://github.com/apchenstu/TensoRF)
 
 Tested on Ubuntu 18.04 + Pytorch 1.10.2
 
@@ -23,6 +24,14 @@ pip install .
 ```bash
 python3 train.py --config=configs/chair.txt --use_mask --mask_weight=1e-10 --grid_bit=8 --use_dwt --dwt_level=4
 ```
+- "--config": the name of the config file
+- "--grid_bit": for n-bit quantization (QAT) (only works on grid parameters)
+- "--use_mask": in order to use trainable masks, use this option
+- "--mask_weight": loss weight to modulate the grid sparsity
+- "--use_dwt": to use wavelet coefficients
+- "--dwt_level": the level of wavelet transform
+- "--trans_func": the name of wavelet function (default=bior4.4)
+
 
 # 2. Model Compression
 ```bash
