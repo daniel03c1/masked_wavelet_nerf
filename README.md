@@ -3,7 +3,7 @@ Daniel Rho*, Byeonghyeon Lee*, Seungtae Nam, Joo Chan Lee, Jong Hwan Ko†, and 
 
 [Project Page](https://daniel03c1.github.io/masked_wavelet_nerf/)
 
-Our code is based on NAS-BOWL (https://github.com/apchenstu/TensoRF)
+Our code is based on TensoRF (https://github.com/apchenstu/TensoRF)
 
 Tested on Ubuntu 18.04 + Pytorch 1.10.2
 
