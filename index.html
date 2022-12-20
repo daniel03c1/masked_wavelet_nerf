@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
 	<title>Masked Wavelet Representation for Compact Neural Radiance Fields</title>
 	<meta charset="UTF-8">
 	<link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
 	<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+	<link href="css/style.css" rel="stylesheet" type="text/css" />
 	<style>
 		html,
 		body,
@@ -155,11 +155,13 @@
 				<div class="w3-center">
 					<h2>Why wavelet transform?</h2>
 				</div>
-				<div class="w3-display-container w3-row w3-white w3-margin-bottom w3-center">
-					<img src="images/fig_level.png" style="width:50%">
+				<div class="w3-display-container w3-row w3-white w3-margin-bottom">
+					<img src="images/rate_distortion_nerf.png" style="width:33%">
+					<img src="images/fig_level.png" style="width:33%">
+					<img src="images/rate_distortion_nsvf.png" style="width:33%">
 					<p align="justify">Using wavelet coefficients can enhance visual quality, especially when sparsity is high. Furthermore, using a higher level of the wavelet transform can improve visual quality and sparsity even further.</p>
 				</div>
-				
+
 				<hr>
 				<div class="w3-center">
 					<h2>Grid visualization</h2>
@@ -214,11 +216,75 @@
 
 					<p align="center">With our proposed method, most wavelet coefficients (more than 95%) can be zeroed out.</p>
 				</div>
-				
+
 				<hr>
 				<div class="w3-center">
 					<h2>Demo</h2>
 				</div>
+				<p><strong>NSVF Synthetic Dataset - Spaceship</strong></p>
+				<div align="center" style="margin-bottom: 52px;"> 
+					<img-comparison-slider hover="hover" tabindex="0" class="rendered">
+					<figure slot="first" class="before"> 
+						<img id="left_img_NSVF_Spaceship" src="https://huggingface.co/blee/Masked_Wavelet_Representation/resolve/main/images/TensoRF/000.png" style="min-width: 800px;">
+						<figcaption id="left_caption_NSVF_Spaceship" style="text-align:left;"> 
+							<b>TensoRF-VM192</b>
+							<br>PSNR: 37.66
+						</figcaption>
+					</figure>
+					<figure slot="second" class="after"> 
+						<img type="image/png" id="right_img_NSVF_Spaceship" src="https://huggingface.co/blee/Masked_Wavelet_Representation/resolve/main/images/000/5e-11.png" style="min-width: 800px;">
+						<figcaption id="right_caption_NSVF_Spaceship" style="text-align:right;"> 
+							<b>Ours-Sparsity 0.9697</b>
+							<br>PSNR: 37.35
+						</figcaption>
+					</figure>
+				</img-comparison-slider>
+				<div class="table-wrapper">
+					<table width="100%">
+						<tbody>
+							<tr>
+								<td align="center"> Left Model</td>
+								<td align="center"> Frame</td>
+								<td align="center"> Right Model</td>
+							</tr>
+							<tr>
+								<td align="center"> 
+									<select id="left_select_NSVF_Spaceship" onchange="select_model(this, 'left', 'NSVF', 'Spaceship')"> 
+										<option selected="selected" value="TensoRF">TensoRF </option>
+										<option value="6.25e-12">Ours-Sparsity 0.8876 </option>
+										<option value="1.25e-11">Ours-Sparsity 0.9165 </option>
+										<option value="2.5e-11">Ours-Sparsity 0.9460 </option>
+										<option value="5e-11">Ours-Sparsity 0.9697 </option>
+										<option value="1e-10">Ours-Sparsity 0.9823 </option>
+										<option value="2e-10">Ours-Sparsity 0.9886 </option>
+										<option value="4e-10">Ours-Sparsity 0.9925 </option>
+										<option value="8e-10">Ours-Sparsity 0.9948 </option>
+										<option value="1.6e-09">Ours-Sparsity 0.9967 </option>
+									</select></td><td align="center"> 
+										<input id="input_NSVF_Spaceship" type="range" min="0" max="199" value="0" onchange="select_frame(this, 'NSVF', 'Spaceship')">
+									</td>
+									<td align="center"> 
+										<select id="right_select_NSVF_Spaceship" onchange="select_model(this, 'right', 'NSVF', 'Spaceship')"> 
+											<option value="TensoRF">TensoRF </option>
+											<option value="6.25e-12">Ours-Sparsity 0.8876 </option>
+											<option value="1.25e-11">Ours-Sparsity 0.9165 </option>
+											<option value="2.5e-11">Ours-Sparsity 0.9460 </option>
+											<option selected="selected" value="5e-11">Ours-Sparsity 0.9697 </option>
+											<option value="1e-10">Ours-Sparsity 0.9823 </option>
+											<option value="2e-10">Ours-Sparsity 0.9886 </option>
+											<option value="4e-10">Ours-Sparsity 0.9925 </option>
+											<option value="8e-10">Ours-Sparsity 0.9948 </option>
+											<option value="1.6e-09">Ours-Sparsity 0.9967 </option>
+										</select>
+									</td>
+								</tr>
+							</tbody>
+						</table>
+					</div>
+				</div>
+
+				
+
 				<p><strong>NeRF Synthetic Dataset</strong></p>
 				<video controls style="width:48%" autoplay loop playsinline muted>
 					<source src="videos/NeRF/chair_mixed.mp4" type="video/mp4">
@@ -297,5 +363,14 @@
 	</div><!-- End Page Container -->
 
 </body>
+<script
+defer
+src="https://unpkg.com/img-comparison-slider@7/dist/index.js"
+></script>
+<script type="text/javascript" src="js/main.js"></script> 
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/img-comparison-slider@7/dist/styles.css"
+/>
 
 </html>
