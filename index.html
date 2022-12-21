@@ -157,7 +157,7 @@
 				</div>
 				<div class="w3-display-container w3-row w3-white w3-margin-bottom">
 					<img src="images/rate_distortion_nerf.png" style="width:33%">
-					<img src="images/fig_level.png" style="width:33%">
+					<img src="images/fig_level.png" style="width:33%; margin-top:10px">
 					<img src="images/rate_distortion_nsvf.png" style="width:33%">
 					<p align="justify">Using wavelet coefficients can enhance visual quality, especially when sparsity is high. Furthermore, using a higher level of the wavelet transform can improve visual quality and sparsity even further.</p>
 				</div>
@@ -221,21 +221,23 @@
 				<div class="w3-center">
 					<h2>Demo</h2>
 				</div>
-				<p><strong>NSVF Synthetic Dataset - Spaceship</strong></p>
+				<p><strong>NeRF Synthetic Dataset - Lego <sup>1)</sup></strong></p>
 				<div align="center" style="margin-bottom: 52px;"> 
 					<img-comparison-slider hover="hover" tabindex="0" class="rendered">
 					<figure slot="first" class="before"> 
-						<img id="left_img_NSVF_Spaceship" src="https://huggingface.co/blee/Masked_Wavelet_Representation/resolve/main/images/TensoRF/000.png" style="min-width: 800px;">
-						<figcaption id="left_caption_NSVF_Spaceship" style="text-align:left;"> 
+						<img id="left_img_NeRF_Lego" src="https://huggingface.co/blee/Masked_Wavelet_Representation/resolve/main/images/NeRF/Lego/TensoRF/000.png" style="min-width: 800px;">
+						<figcaption id="left_caption_NeRF_Lego" style="text-align:left;"> 
 							<b>TensoRF-VM192</b>
-							<br>PSNR: 37.66
+							<br>PSNR: 36.04
+							<br>Size: 17.03MB
 						</figcaption>
 					</figure>
 					<figure slot="second" class="after"> 
-						<img type="image/png" id="right_img_NSVF_Spaceship" src="https://huggingface.co/blee/Masked_Wavelet_Representation/resolve/main/images/000/5e-11.png" style="min-width: 800px;">
-						<figcaption id="right_caption_NSVF_Spaceship" style="text-align:right;"> 
-							<b>Ours-Sparsity 0.9697</b>
-							<br>PSNR: 37.35
+						<img type="image/png" id="right_img_NeRF_Lego" src="https://huggingface.co/blee/Masked_Wavelet_Representation/resolve/main/images/NeRF/Lego/000/5e-11.png" style="min-width: 800px;">
+						<figcaption id="right_caption_NeRF_Lego" style="text-align:right;"> 
+							<b>Ours-Sparsity 0.9441</b>
+							<br>PSNR: 35.33
+							<br>Size: 1.67MB 
 						</figcaption>
 					</figure>
 				</img-comparison-slider>
@@ -249,32 +251,34 @@
 							</tr>
 							<tr>
 								<td align="center"> 
-									<select id="left_select_NSVF_Spaceship" onchange="select_model(this, 'left', 'NSVF', 'Spaceship')"> 
+									<select id="left_select_NeRF_Lego" onchange="select_model(this, 'left', 'NeRF', 'Lego')"> 
+										<option value="GT">Ground Truth </option>
 										<option selected="selected" value="TensoRF">TensoRF </option>
-										<option value="6.25e-12">Ours-Sparsity 0.8876 </option>
+										<option value="6.25e-12">Ours-Sparsity 0.8758 </option>
 										<option value="1.25e-11">Ours-Sparsity 0.9165 </option>
-										<option value="2.5e-11">Ours-Sparsity 0.9460 </option>
-										<option value="5e-11">Ours-Sparsity 0.9697 </option>
-										<option value="1e-10">Ours-Sparsity 0.9823 </option>
-										<option value="2e-10">Ours-Sparsity 0.9886 </option>
-										<option value="4e-10">Ours-Sparsity 0.9925 </option>
-										<option value="8e-10">Ours-Sparsity 0.9948 </option>
-										<option value="1.6e-09">Ours-Sparsity 0.9967 </option>
+										<option value="2.5e-11">Ours-Sparsity 0.9441 </option>
+										<option value="5e-11">Ours-Sparsity 0.9652 </option>
+										<option value="1e-10">Ours-Sparsity 0.9794 </option>
+										<option value="2e-10">Ours-Sparsity 0.9864 </option>
+										<option value="4e-10">Ours-Sparsity 0.9907 </option>
+										<option value="8e-10">Ours-Sparsity 0.9940 </option>
+										<option value="1.6e-09">Ours-Sparsity 0.9959 </option>
 									</select></td><td align="center"> 
-										<input id="input_NSVF_Spaceship" type="range" min="0" max="199" value="0" onchange="select_frame(this, 'NSVF', 'Spaceship')">
+										<input id="input_NeRF_Lego" type="range" min="0" max="199" value="0" onchange="select_frame(this, 'NeRF', 'Lego')">
 									</td>
 									<td align="center"> 
-										<select id="right_select_NSVF_Spaceship" onchange="select_model(this, 'right', 'NSVF', 'Spaceship')"> 
+										<select id="right_select_NeRF_Lego" onchange="select_model(this, 'right', 'NeRF', 'Lego')"> 
+											<option value="GT">Ground Truth </option>
 											<option value="TensoRF">TensoRF </option>
-											<option value="6.25e-12">Ours-Sparsity 0.8876 </option>
+											<option value="6.25e-12">Ours-Sparsity 0.8758 </option>
 											<option value="1.25e-11">Ours-Sparsity 0.9165 </option>
-											<option value="2.5e-11">Ours-Sparsity 0.9460 </option>
-											<option selected="selected" value="5e-11">Ours-Sparsity 0.9697 </option>
-											<option value="1e-10">Ours-Sparsity 0.9823 </option>
-											<option value="2e-10">Ours-Sparsity 0.9886 </option>
-											<option value="4e-10">Ours-Sparsity 0.9925 </option>
-											<option value="8e-10">Ours-Sparsity 0.9948 </option>
-											<option value="1.6e-09">Ours-Sparsity 0.9967 </option>
+											<option value="2.5e-11">Ours-Sparsity 0.9441 </option>
+											<option selected="selected" value="5e-11">Ours-Sparsity 0.9652 </option>
+											<option value="1e-10">Ours-Sparsity 0.9794 </option>
+											<option value="2e-10">Ours-Sparsity 0.9864 </option>
+											<option value="4e-10">Ours-Sparsity 0.9907 </option>
+											<option value="8e-10">Ours-Sparsity 0.9940 </option>
+											<option value="1.6e-09">Ours-Sparsity 0.9959 </option>
 										</select>
 									</td>
 								</tr>
@@ -353,9 +357,14 @@
 					<source src="videos/NSVF/Wineholder_mixed.mp4" type="video/mp4">
 					Sorry, your browser doesn't support embedded videos.
 				</video>
-				
 
 				<hr>
+
+				<div class="w3-center">
+                    <p class="text-justify">
+                        <sup>1)</sup> This demo borrowed a template of <a href="https://kakaobrain.github.io/NeRF-Factory/">NeRF-Factory</a>.
+                    </p>
+                </div>
 			</div>
 			<!-- end paper container -->
 
