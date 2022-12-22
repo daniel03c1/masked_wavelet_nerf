@@ -47,12 +47,14 @@
 			color: #2196F3;
 		}
 		
-		.row{
-		    display:block;
-		}
-
-		.row div{
-		    display:inline;
+		.bibtexsection {
+			font-family: "Courier", monospace;
+			font-size: 16px;
+			white-space: pre;
+			background-color: #f4f4f4;
+			margin-left: auto;
+			margin-right: auto;
+			text-align: left;
 		}
 
 		.layered-paper-big {
@@ -357,9 +359,21 @@
 					<source src="videos/NSVF/Wineholder_mixed.mp4" type="video/mp4">
 					Sorry, your browser doesn't support embedded videos.
 				</video>
+				
+				<hr>
+				<div class="w3-center">
+					<h2>Bibtex</h2>
+				</div>
+				<div class="bibtexsection">
+					@article{rho2022masked,
+					  title={Masked Wavelet Representation for Compact Neural Radiance Fields},
+					  author={Rho, Daniel and Lee, Byeonghyeon and Nam, Seungtae and Lee, Joo Chan and Ko, Jong Hwan and Park, Eunbyung},
+					  journal={arXiv preprint arXiv:2212.09069},
+					  year={2022}
+					}
+				</div>
 
 				<hr>
-
 				<div class="w3-center">
 					<p class="text-justify">
 						We used the project page of <a href="https://leonidk.github.io/fuzzy-metaballs/">Fuzzy Metaballs</a> as a template, and our interactive demo is based on <a href="https://kakaobrain.github.io/NeRF-Factory/">NeRF-Factory</a>.
