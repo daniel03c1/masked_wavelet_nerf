@@ -297,12 +297,11 @@ def reconstruction(args):
                 # update volume resolution
                 reso_mask = reso_cur
 
-            if args.alpha_offset > 0:
-                if iteration != update_AlphaMask_list[0]:
-                    tensorf.alphaMask = None
+            if iteration != update_AlphaMask_list[0]:
+                tensorf.alphaMask = None
 
-                if iteration == update_AlphaMask_list[3]:
-                    tensorf.alpha_offset = 0
+            if iteration == update_AlphaMask_list[3]:
+                tensorf.alpha_offset = 0
 
             new_aabb = tensorf.updateAlphaMask(tuple(reso_mask))
 
