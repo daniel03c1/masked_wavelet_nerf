@@ -4,13 +4,15 @@ datadir = ./data/Synthetic_NSVF/Wineholder
 expname =  tensorf_Wineholder_VM
 basedir = ./log
 
+alpha_offset = 1e-4
+
 n_iters = 30000
 batch_size = 4096
 
 N_voxel_init = 2097156 # 128**3
 N_voxel_final = 27000000 # 300**3
 upsamp_list = [2000,3000,4000,5500,7000]
-update_AlphaMask_list = [2000,4000]
+update_AlphaMask_list = [2000, 4000, 6000, 11000, 16000, 21000, 26000] 
 
 N_vis = 5
 vis_every = 10000

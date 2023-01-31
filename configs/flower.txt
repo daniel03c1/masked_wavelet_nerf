@@ -4,6 +4,8 @@ datadir = ./data/nerf_llff_data/flower
 expname =  tensorf_flower_VM
 basedir = ./log
 
+alpha_offset = 1e-4
+
 downsample_train = 4.0
 ndc_ray = 1
 
@@ -13,7 +15,7 @@ batch_size = 4096
 N_voxel_init = 2097156 # 128**3
 N_voxel_final = 262144000 # 640**3
 upsamp_list = [2000,3000,4000,5500]
-update_AlphaMask_list = [2500]
+update_AlphaMask_list = [2500, 4000, 6000, 11000, 16000, 21000] 
 
 N_vis = -1 # vis all testing images
 vis_every = 10000
