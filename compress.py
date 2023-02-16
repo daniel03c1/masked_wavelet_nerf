@@ -1,5 +1,5 @@
-import os
 import math
+import os
 from opt import config_parser
 from renderer import *
 from utils import *
@@ -8,8 +8,10 @@ from huffman import *
 from run_length_encoding.rle.np_impl import dense_to_rle, rle_to_dense
 from collections import OrderedDict
 from dataLoader import dataset_dict
+from models.dwt import inverse
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def cubify(arr, newshape):
     oldshape = np.array(arr.shape)
@@ -355,7 +357,6 @@ def decompress_dwt_levelwise(args):
     ckpt = torch.load(param_path, map_location='cpu')
 
     # ---------------------- mask reconstruction ---------------------- #
-
     # (1) unpack byte to bits
     mask = byte2bit(ckpt["mask"])
 
@@ -420,10 +421,7 @@ def decompress_dwt_levelwise(args):
     # (5) convert dtype: int8 -> float32
     for key in state_keys:
         for i in range(3):
-            masks[key][i] = nn.Parameter(
-                torch.from_numpy(masks[key][i].astype(np.float32))
-            )
-        masks[key] = nn.ParameterList(masks[key])
+            masks[key][i] = torch.from_numpy(masks[key][i].astype(np.float32))
 
     # ---------------------- grid reconstruction ---------------------- #
     
@@ -434,15 +432,26 @@ def decompress_dwt_levelwise(args):
             feat = ckpt["feature"][key][i]
             scale = ckpt["scale"][key][i]
             minvl = ckpt["minvl"][key][i]
-            features[key] += [nn.Parameter(torch.zeros(masks[key][i].shape))]
-            features[key][-1][masks[key][i] == 1] = dequantize_int(feat, scale, minvl)
-        features[key] = nn.ParameterList(features[key])
+            features[key] += [torch.zeros(masks[key][i].shape)]
+            features[key][-1][masks[key][i] == 1] = dequantize_int(
+                feat, scale, minvl)
+            if 'plane' in key and args.use_dwt:
+                features[key][-1] = inverse(features[key][-1], args.dwt_level,
+                                            args.trans_func)
+
+    for key in state_keys:
+        masks[key] = nn.ParameterList(
+            [nn.Parameter(m) for m in masks[key]])
+
+    for key in features.keys():
+        features[key] = nn.ParameterList(
+            [nn.Parameter(m) for m in features[key]])
 
     # check kwargs
     kwargs.update({'device': device})
-
-    # IMPORTANT: aabb to cuda
     kwargs["aabb"] = kwargs["aabb"].to(device)
+    kwargs["use_dwt"] = False
+    kwargs["use_mask"] = False
 
     # load params
     tensorf = eval(args.model_name)(**kwargs)
@@ -450,10 +459,6 @@ def decompress_dwt_levelwise(args):
     tensorf.density_line = features["density_line"].to(device)
     tensorf.app_plane = features["app_plane"].to(device)
     tensorf.app_line = features["app_line"].to(device)
-    tensorf.density_plane_mask = masks["density_plane"].to(device)
-    tensorf.density_line_mask = masks["density_line"].to(device)
-    tensorf.app_plane_mask = masks["app_plane"].to(device)
-    tensorf.app_line_mask = masks["app_line"].to(device)
     tensorf.renderModule = ckpt["render_module"].to(device)
     tensorf.basis_mat = ckpt["basis_mat"].to(device)
 
@@ -463,15 +468,14 @@ def decompress_dwt_levelwise(args):
     tensorf.updateAlphaMask((X,Y,Z))
 
     print("model loaded.")
-
-    args.use_dwt = True
     if args.decompress_and_validate:
         # renderder
         renderer = OctreeRender_trilinear_fast
 
         # init dataset
         dataset = dataset_dict[args.dataset_name]
-        test_dataset = dataset(args.datadir, split='test', downsample=args.downsample_train, is_stack=True)
+        test_dataset = dataset(args.datadir, split='test',
+                               downsample=args.downsample_train, is_stack=True)
 
         white_bg = test_dataset.white_bg
         ndc_ray = args.ndc_ray
@@ -479,10 +483,12 @@ def decompress_dwt_levelwise(args):
         logfolder = os.path.dirname(args.ckpt)
 
         os.makedirs(f'{logfolder}/{args.expname}/imgs_test_all', exist_ok=True)
-        PSNRs_test = evaluation(test_dataset, tensorf, args, renderer, f'{logfolder}/{args.expname}/imgs_test_all/',
-                                N_vis=-1, N_samples=-1, white_bg = white_bg, ndc_ray=ndc_ray,device=device)
+        PSNRs_test = evaluation(test_dataset, tensorf, args, renderer,
+                                f'{logfolder}/{args.expname}/imgs_test_all/',
+                                N_vis=args.N_vis, N_samples=-1,
+                                white_bg=white_bg,
+                                ndc_ray=ndc_ray, device=device)
         print(f'============> {args.expname} test all psnr: {np.mean(PSNRs_test)} <============')
-
 
 
 if __name__ == '__main__':
@@ -497,3 +503,4 @@ if __name__ == '__main__':
 
     if args.decompress:
         decompress_dwt_levelwise(args)
+
