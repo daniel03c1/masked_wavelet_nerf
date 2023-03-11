@@ -6,6 +6,8 @@ CVPR 2023
 
 Our code is based on TensoRF (https://github.com/apchenstu/TensoRF)
 
+Our method, however, can be applied to <strong>any 2D grid-based neural fields</strong>.
+
 Tested on Ubuntu 18.04 + Pytorch 1.10.2
 
 # 0. Requirements
