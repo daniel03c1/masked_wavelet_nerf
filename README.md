@@ -1,10 +1,9 @@
 # Masked Wavelet Representation for Compact Neural Radiance Fields
-Daniel Rho*, Byeonghyeon Lee*, Seungtae Nam, Joo Chan Lee, Jong Hwan Ko†, and Eunbyung Park†
-CVPR 2023
+Daniel Rho*, Byeonghyeon Lee*, Seungtae Nam, Joo Chan Lee, Jong Hwan Ko†, and Eunbyung Park†, <strong>CVPR 2023</strong>
 
 [Project Page](https://daniel03c1.github.io/masked_wavelet_nerf/), [Paper(arxiv)](https://arxiv.org/abs/2212.09069)
 
-Our code is based on TensoRF (https://github.com/apchenstu/TensoRF)
+Our code is based on TensoRF (https://github.com/apchenstu/TensoRF).
 
 Our method, however, can be applied to <strong>any 2D grid-based neural fields</strong>.
 
