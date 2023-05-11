@@ -462,6 +462,11 @@ def decompress_dwt_levelwise(args):
     tensorf.renderModule = ckpt["render_module"].to(device)
     tensorf.basis_mat = ckpt["basis_mat"].to(device)
 
+    # Apply inverse DWT to the planes so that no need to do IDWT during inference
+    for i in range(len(tensorf.density_plane)):
+        tensorf.density_plane[i].data = inverse(tensorf.density_plane[i].data)
+        tensorf.app_plane[i].data = inverse(tensorf.app_plane[i].data)
+
     # load alpha mask
     Z, Y, X = alphaMask_shape
     tensorf.alpha_offset = 0
