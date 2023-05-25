@@ -55,3 +55,15 @@ python3 compress.py --compress=1 --compress_levelwise=1 --ckpt=PATH_TO_CHECKPOIN
 ```bash
 python3 compress.py --decompress=1 --decompress_levelwise=1 --config=configs/chair.txt --ckpt=PATH_TO_CHECKPOINT
 ```
+
+# 4. Bibtex
+```bash
+@InProceedings{Rho_2023_CVPR,
+    author    = {Rho, Daniel and Lee, Byeonghyeon and Nam, Seungtae and Lee, Joo Chan and Ko, Jong Hwan and Park, Eunbyung},
+    title     = {Masked Wavelet Representation for Compact Neural Radiance Fields},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+    month     = {June},
+    year      = {2023},
+    pages     = {20680-20690}
+}
+```
